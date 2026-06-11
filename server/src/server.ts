@@ -820,6 +820,127 @@ Provide a detailed evaluation in JSON format:
   }
 });
 
+// Helper for fallback conversation classification and responses
+function fallbackConverse(question: string, userInput: string) {
+  const input = userInput.trim().toLowerCase();
+  
+  // Regex patterns for repeat
+  const repeatPatterns = /repeat|pardon|say again|replay|could you repeat|didn't hear|missed the question/i;
+  
+  // Regex patterns for clarification / social remarks
+  const socialPatterns = /thank you|thanks|hello|hi\b|hey|good morning|good afternoon|good evening|wow|interesting|difficult|tough/i;
+  const clarifyPatterns = /clarify|what do you mean|explain|definition|define|understand/i;
+
+  if (repeatPatterns.test(input)) {
+    return {
+      type: 'repeat',
+      reply: `Sure, let me repeat the question for you: "${question}"`
+    };
+  }
+
+  if (socialPatterns.test(input) || clarifyPatterns.test(input)) {
+    let reply = `No problem. `;
+    if (/thank/i.test(input)) {
+      reply = `You're welcome! `;
+    } else if (/hello|hi/i.test(input)) {
+      reply = `Hello! `;
+    }
+    
+    return {
+      type: 'clarification',
+      reply: `${reply}Let's focus on the question: "${question}"`
+    };
+  }
+
+  // Otherwise, treat as an answer
+  return {
+    type: 'answer',
+    reply: null
+  };
+}
+
+// Conversation Classification API
+app.post('/api/interview/converse', async (req, res) => {
+  try {
+    const { question, user_input, role, difficulty } = req.body;
+    
+    console.log('💬 Classifying user input for interview conversation...');
+    console.log('   Question:', question?.substring(0, 60) + '...');
+    console.log('   User Input:', user_input);
+
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+
+    // If no API key, return fallback response
+    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+      console.warn('⚠️ No OpenAI API key - using local fallback heuristics');
+      const fallbackResult = fallbackConverse(question || '', user_input || '');
+      return res.json(fallbackResult);
+    }
+
+    // Call OpenAI GPT-3.5 to classify and respond
+    const prompt = `Analyze the candidate's input in response to the active interview question.
+
+Active Question: "${question}"
+Candidate Input: "${user_input}"
+Job Role: "${role}"
+Difficulty: "${difficulty}"
+
+Classify the candidate's input into one of three types:
+1. "answer": The candidate is attempting to answer the question, even if it is a short or partial answer.
+2. "repeat": The candidate is asking to repeat the question or didn't hear/understand it (e.g., "can you repeat?", "what was the question?", "pardon?", "say again").
+3. "clarification": The candidate is asking for clarification about a term in the question, or making a polite/social/unrelated comment (e.g., "thank you", "hello", "interesting", "that's a tough one", "what do you mean by X?").
+
+If the classification is "repeat" or "clarification", generate a conversational "reply" that the interviewer (you) should say back to the candidate. This reply should address their query/remark politely and then restate or clarify the original question. Keep it natural, warm, and professional, and use a friendly Indian English conversational style where appropriate (but keep the language standard English). Do not use placeholders.
+
+If the classification is "answer", the "reply" field can be empty or null.
+
+Respond ONLY in JSON format:
+{
+  "type": "answer" | "repeat" | "clarification",
+  "reply": "Conversational response to candidate, followed by restating the question if type is repeat or clarification. Otherwise null."
+}`;
+
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'You are an expert technical interviewer. Always respond with valid JSON.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 300,
+      }),
+    });
+
+    if (!openaiResponse.ok) {
+      const errorText = await openaiResponse.text();
+      console.error('OpenAI API error:', openaiResponse.status, errorText);
+      const fallbackResult = fallbackConverse(question || '', user_input || '');
+      return res.json(fallbackResult);
+    }
+
+    const openaiData = await openaiResponse.json();
+    const content = openaiData.choices[0].message.content;
+    const result = JSON.parse(content);
+    
+    console.log(`✅ Classification: ${result.type}`);
+    if (result.reply) {
+      console.log(`   Reply: "${result.reply}"`);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Conversation classification error:', error);
+    const fallbackResult = fallbackConverse(req.body.question || '', req.body.user_input || '');
+    res.json(fallbackResult);
+  }
+});
+
 // Mock Text-to-Speech API (Now with Sarvam AI integration)
 app.post('/api/interview/text-to-speech', async (req, res) => {
   try {

@@ -91,6 +91,7 @@ export default function LiveInterview() {
   const previousQARef = useRef<PreviousQA[]>([]); // Sync ref for question context
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [isEvaluatingAll, setIsEvaluatingAll] = useState(false);
+  const [isConversing, setIsConversing] = useState(false);
   
   // Communication analytics
   const { startTracking, recordPause, analyzeAnswer, getAverageMetrics, allAnalytics } = useCommunicationAnalytics();
@@ -375,6 +376,48 @@ export default function LiveInterview() {
         handleNext();
       }, 100);
       return;
+    }
+
+    setIsConversing(true);
+    let isAnswer = true;
+    let replyText = "";
+
+    try {
+      const converseUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/interview/converse`;
+      const response = await fetch(converseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          question: questions[currentQuestion].question,
+          user_input: userAnswer,
+          role: interviewConfig.role,
+          difficulty: interviewConfig.difficulty,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.type === 'repeat' || result.type === 'clarification') {
+          isAnswer = false;
+          replyText = result.reply || "";
+        }
+      }
+    } catch (err) {
+      console.error('Error in conversation check:', err);
+    } finally {
+      setIsConversing(false);
+    }
+
+    if (!isAnswer) {
+      console.log(`💬 Conversational response: "${replyText}"`);
+      if (isSoundOn && replyText) {
+        speak(replyText, { language: 'en-IN', speaker: 'kavya' });
+      }
+      resetTranscript();
+      setTextAnswer("");
+      return; // Do not advance to next question
     }
 
     console.log('💾 Storing answer...');
@@ -1177,7 +1220,7 @@ export default function LiveInterview() {
                 
                 <button
                   onClick={handleSubmit}
-                  disabled={!transcript.trim() || isEvaluating}
+                  disabled={!transcript.trim() || isEvaluating || isConversing}
                   className="px-6 py-3 rounded-xl transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     fontFamily: "'Inter', sans-serif",
@@ -1185,10 +1228,10 @@ export default function LiveInterview() {
                     fontSize: "0.875rem",
                     backgroundColor: "#10B981",
                     color: "#FFFFFF",
-                    boxShadow: transcript.trim() && !isEvaluating ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
+                    boxShadow: transcript.trim() && !isEvaluating && !isConversing ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
                   }}
                 >
-                  {isEvaluating ? "Evaluating..." : "Submit & Next"}
+                  {isConversing ? "Analyzing..." : isEvaluating ? "Evaluating..." : "Submit & Next"}
                 </button>
               </div>
 
@@ -1228,7 +1271,7 @@ export default function LiveInterview() {
               </div>
               <button
                 onClick={handleSubmit}
-                disabled={!textAnswer.trim() || isEvaluating}
+                disabled={!textAnswer.trim() || isEvaluating || isConversing}
                 className="px-6 py-3 rounded-xl transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed self-end"
                 style={{
                   fontFamily: "'Inter', sans-serif",
@@ -1236,10 +1279,10 @@ export default function LiveInterview() {
                   fontSize: "0.875rem",
                   backgroundColor: "#10B981",
                   color: "#FFFFFF",
-                  boxShadow: textAnswer.trim() && !isEvaluating ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
+                  boxShadow: textAnswer.trim() && !isEvaluating && !isConversing ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
                 }}
               >
-                {isEvaluating ? "Evaluating..." : "Submit & Next"}
+                {isConversing ? "Analyzing..." : isEvaluating ? "Evaluating..." : "Submit & Next"}
               </button>
             </div>
           )}
