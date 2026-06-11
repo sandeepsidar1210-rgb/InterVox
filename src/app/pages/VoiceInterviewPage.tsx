@@ -32,6 +32,7 @@ export default function VoiceInterviewPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
+  const [currentReaction, setCurrentReaction] = useState('');
   const [transcript, setTranscript] = useState<string[]>([]);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [stats, setStats] = useState<InterviewStats | null>(null);
@@ -302,6 +303,7 @@ export default function VoiceInterviewPage() {
     setCurrentQuestion(data.question);
     setCurrentAudio(data.audio);
     setCurrentTranscript('');
+    setCurrentReaction(data.reaction || '');
     setStatus('idle');
     setLastEvaluation(null);
     setShowPlayButton(false);
@@ -313,9 +315,12 @@ export default function VoiceInterviewPage() {
       });
     }
 
-    const spokenText = data.isFollowUp
-      ? `Here is a follow-up question. ${data.question}`
-      : data.question;
+    let spokenText = data.question;
+    if (data.reaction) {
+      spokenText = `${data.reaction} ${data.question}`;
+    } else if (data.isFollowUp) {
+      spokenText = `Here is a follow-up question. ${data.question}`;
+    }
 
     await playQuestionWithDelay(
       data.audio || null,
@@ -419,7 +424,7 @@ export default function VoiceInterviewPage() {
   };
 
   const handleStopRecording = () => {
-    voiceInterviewService.stopRecording();
+    voiceInterviewService.stopRecording(liveTranscript);
     setIsRecording(false);
     setStatus('evaluating');
     stopAudioLevelMonitoring();
@@ -590,6 +595,9 @@ export default function VoiceInterviewPage() {
                 <CardTitle className="text-lg text-white">Current Question</CardTitle>
               </CardHeader>
               <CardContent>
+                {currentReaction && (
+                  <p className="text-sm text-blue-400 font-medium italic mb-3">"{currentReaction}"</p>
+                )}
                 <p className="text-xl text-gray-300 leading-relaxed">{currentQuestion || 'Initializing interview...'}</p>
                 <div className="mt-4 flex items-center gap-2">
                   <Badge className="flex items-center gap-1" variant={status === 'speaking' ? 'default' : 'secondary'}>

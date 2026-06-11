@@ -230,6 +230,8 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
 
   // Extract specific claims for cross-questioning with more patterns
   const metricsPatterns = [
+    { pattern: /\b(my name is|i am|i'm|hello|hi\b|hey|greetings|introduce myself|nice to meet you)\b/i, keyword: 'introduction' },
+    { pattern: /\b(not made any project|no projects|no project|haven't built any|never made any|no experience|don't have any project|don't have experience|didn't build any project|don't have projects|not built anything)\b/i, keyword: 'no_projects' },
     { pattern: /improved|optimized|reduced|increased|performance|latency|throughput|(\d+%)/, keyword: 'metrics' },
     { pattern: /led|managed|mentored|owned|architected/, keyword: 'leadership' },
     { pattern: /challenge|difficult|complex|issue|bug|problem|failure|incident|outage|critical/, keyword: 'challenge' },
@@ -247,7 +249,11 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
   }
 
   // Generate contextual reactions based on answer quality
-  if (answer.length > 300) {
+  if (highestPattern === 'introduction') {
+    reactions.push("Nice to meet you! Thanks for introducing yourself.");
+  } else if (highestPattern === 'no_projects') {
+    reactions.push("I understand. It can be challenging to start without formal project experience.");
+  } else if (answer.length > 300) {
     reactions.push("I appreciate the thoughtful depth in that answer.");
   } else if (answer.length > 150) {
     reactions.push("That's a comprehensive response.");
@@ -258,7 +264,13 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
   }
 
   // Generate cross-questions based on detected patterns
-  if (highestPattern === 'metrics') {
+  if (highestPattern === 'introduction') {
+    reactions.unshift("Hello! It's great to have you here today.");
+    crossQuestion = null;
+  } else if (highestPattern === 'no_projects') {
+    reactions.unshift("I see. Starting out without formal projects is a common stage in any developer's path.");
+    crossQuestion = `If you were to design and build your first full-stack application today, what kind of application would you want to build and how would you plan your approach?`;
+  } else if (highestPattern === 'metrics') {
     reactions.unshift("That shows focus on measurable impact - I like that.");
     // Ask about the baseline/measurement method
     const numberMatch = answer.match(/(\d+%|\d+x)/);
@@ -315,183 +327,210 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
   return { reaction: selectedReaction, crossQuestion };
 }
 
-// Generate Question API (AI-powered question generation)
-app.post('/api/interview/generate-question', async (req, res) => {
-  try {
-    const { role, difficulty, previous_qa, use_ai } = req.body;
+// Core async function to generate dynamic questions (using OpenAI with Groq fallback)
+async function generateQuestionInternal(
+  role: string,
+  difficulty: string,
+  previous_qa: Array<{ question: string; answer: string }>,
+  use_ai: boolean = true
+): Promise<any> {
+  const normalizedRole = String(role || 'software_engineer').replace('_', ' ');
+  const qaHistory = (Array.isArray(previous_qa) ? previous_qa : []) as Array<{ question?: string; answer?: string }>;
 
-    const normalizedRole = String(role || 'software_engineer').replace('_', ' ');
-    const qaHistory = (Array.isArray(previous_qa) ? previous_qa : []) as Array<{ question?: string; answer?: string }>;
+  const buildFallbackQuestion = () => {
+    const askedQuestions = new Set(
+      qaHistory
+        .map((qa) => String(qa.question || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
 
-    const buildFallbackQuestion = () => {
-      const askedQuestions = new Set(
-        qaHistory
-          .map((qa) => String(qa.question || '').trim().toLowerCase())
-          .filter(Boolean)
-      );
+    const lastAnswer = String(qaHistory[qaHistory.length - 1]?.answer || '').trim();
+    const lastQuestion = String(qaHistory[qaHistory.length - 1]?.question || '').trim();
+    
+    const { reaction, crossQuestion } = generateSmartReactionAndQuestion(lastAnswer, lastQuestion, difficulty, normalizedRole, qaHistory);
 
-      const lastAnswer = String(qaHistory[qaHistory.length - 1]?.answer || '').trim();
-      const lastQuestion = String(qaHistory[qaHistory.length - 1]?.question || '').trim();
-      
-      const { reaction, crossQuestion } = generateSmartReactionAndQuestion(lastAnswer, lastQuestion, difficulty, normalizedRole, qaHistory);
-
-      // If we generated a smart cross-question, use it first (deep dive into their answer)
-      if (crossQuestion && qaHistory.length > 1) {
-        return {
-          question: crossQuestion,
-          ideal_answer: 'A strong answer should provide concrete examples and explain your thought process.',
-          keywords: ['example', 'explanation', 'outcome', 'learning', 'decision'],
-          reaction,
-          role,
-          difficulty,
-          is_cross_question: true
-        };
-      }
-
-      const easyBank = [
-        {
-          question: `What project are you most proud of as a ${normalizedRole}, and why?`,
-          ideal_answer: 'A strong answer explains the project context, your specific contribution, constraints, and measurable business outcome.',
-          keywords: ['project', 'ownership', 'impact', 'outcome', 'contribution']
-        },
-        {
-          question: 'How do you break down a large task when requirements are unclear?',
-          ideal_answer: 'A strong answer includes clarification steps, prioritization, assumptions, milestones, and stakeholder communication.',
-          keywords: ['clarification', 'prioritization', 'milestones', 'communication', 'planning']
-        },
-        {
-          question: 'Describe a time you received critical feedback. What changed after that?',
-          ideal_answer: 'A strong answer includes openness to feedback, concrete changes made, and measurable improvement over time.',
-          keywords: ['feedback', 'growth', 'improvement', 'reflection', 'results']
-        },
-        {
-          question: `Tell me about a ${normalizedRole} task that tested your problem-solving skills.`,
-          ideal_answer: 'A strong answer includes the problem context, your approach, challenges overcome, and the final result.',
-          keywords: ['problem', 'approach', 'solution', 'testing', 'analysis']
-        },
-        {
-          question: 'How do you stay current with new technologies in your field?',
-          ideal_answer: 'A strong answer shows commitment to learning with specific examples like courses, projects, or communities.',
-          keywords: ['learning', 'technologies', 'growth', 'initiative', 'examples']
-        }
-      ];
-
-      const mediumBank = [
-        {
-          question: `Walk me through a technical decision you made recently and the trade-offs you considered.`,
-          ideal_answer: 'A strong answer covers options considered, decision criteria, trade-offs, implementation details, and outcome.',
-          keywords: ['trade-offs', 'decision', 'alternatives', 'implementation', 'outcome']
-        },
-        {
-          question: 'How do you debug a production issue when logs are incomplete?',
-          ideal_answer: 'A strong answer includes reproduction strategy, hypothesis testing, observability improvements, and rollback safety.',
-          keywords: ['debugging', 'hypothesis', 'observability', 'rollback', 'incident']
-        },
-        {
-          question: 'How do you ensure your code remains maintainable as the system grows?',
-          ideal_answer: 'A strong answer includes testing strategy, code reviews, modularity, documentation, and refactoring discipline.',
-          keywords: ['testing', 'modularity', 'reviews', 'documentation', 'refactoring']
-        },
-        {
-          question: 'Describe a time when you had to collaborate with a challenging team member.',
-          ideal_answer: 'A strong answer shows empathy, communication, and focus on shared goals rather than blame.',
-          keywords: ['collaboration', 'communication', 'resolution', 'empathy', 'teamwork']
-        },
-        {
-          question: 'How would you approach optimizing a slow-running system?',
-          ideal_answer: 'A strong answer starts with measurement, includes profiling strategy, and discusses trade-offs.',
-          keywords: ['profiling', 'optimization', 'measurement', 'bottleneck', 'improvement']
-        }
-      ];
-
-      const hardBank = [
-        {
-          question: 'Design a resilient architecture for a high-traffic service and explain failure handling.',
-          ideal_answer: 'A strong answer includes scaling strategy, bottleneck analysis, caching, retries, circuit breakers, and monitoring.',
-          keywords: ['scalability', 'resilience', 'caching', 'retries', 'monitoring']
-        },
-        {
-          question: 'Describe how you would reduce latency in a system with mixed read/write workloads.',
-          ideal_answer: 'A strong answer includes profiling, query optimization, caching strategy, async processing, and measurement.',
-          keywords: ['latency', 'profiling', 'optimization', 'caching', 'throughput']
-        },
-        {
-          question: 'How would you lead a critical migration with near-zero downtime?',
-          ideal_answer: 'A strong answer includes rollout strategy, feature flags, backward compatibility, monitoring, and rollback plans.',
-          keywords: ['migration', 'rollout', 'compatibility', 'rollback', 'risk']
-        },
-        {
-          question: 'Tell me about a time you made a critical decision that had long-term consequences.',
-          ideal_answer: 'A strong answer reflects thoughtfulness about impact, learning from outcomes, and ownership.',
-          keywords: ['decision', 'impact', 'ownership', 'reflection', 'learning']
-        },
-        {
-          question: 'How do you balance technical excellence with shipping on deadline?',
-          ideal_answer: 'A strong answer shows pragmatism, prioritization, and realistic assessment of trade-offs.',
-          keywords: ['prioritization', 'trade-off', 'pragmatism', 'deadline', 'quality']
-        }
-      ];
-
-      const bank = difficulty === 'hard' ? hardBank : difficulty === 'easy' ? easyBank : mediumBank;
-      
-      // Find a question that hasn't been asked yet
-      let nextQuestion = null;
-      for (const question of bank) {
-        if (!askedQuestions.has(question.question.trim().toLowerCase())) {
-          nextQuestion = question;
-          break;
-        }
-      }
-      
-      // Fallback if all questions have been asked (shouldn't happen in normal interview)
-      if (!nextQuestion) {
-        nextQuestion = bank[qaHistory.length % bank.length];
-      }
-
+    // If we generated a smart cross-question, use it first (deep dive into their answer)
+    if (crossQuestion && qaHistory.length > 1) {
       return {
-        ...nextQuestion,
+        question: crossQuestion,
+        ideal_answer: 'A strong answer should provide concrete examples and explain your thought process.',
+        keywords: ['example', 'explanation', 'outcome', 'learning', 'decision'],
         reaction,
         role,
-        difficulty
+        difficulty,
+        is_cross_question: true
       };
+    }
+
+    const easyBank = [
+      {
+        question: `What project are you most proud of as a ${normalizedRole}, and why?`,
+        ideal_answer: 'A strong answer explains the project context, your specific contribution, constraints, and measurable business outcome.',
+        keywords: ['project', 'ownership', 'impact', 'outcome', 'contribution']
+      },
+      {
+        question: 'How do you break down a large task when requirements are unclear?',
+        ideal_answer: 'A strong answer includes clarification steps, prioritization, assumptions, milestones, and stakeholder communication.',
+        keywords: ['clarification', 'prioritization', 'milestones', 'communication', 'planning']
+      },
+      {
+        question: 'Describe a time you received critical feedback. What changed after that?',
+        ideal_answer: 'A strong answer includes openness to feedback, concrete changes made, and measurable improvement over time.',
+        keywords: ['feedback', 'growth', 'improvement', 'reflection', 'results']
+      },
+      {
+        question: `Tell me about a ${normalizedRole} task that tested your problem-solving skills.`,
+        ideal_answer: 'A strong answer includes the problem context, your approach, challenges overcome, and the final result.',
+        keywords: ['problem', 'approach', 'solution', 'testing', 'analysis']
+      },
+      {
+        question: 'How do you stay current with new technologies in your field?',
+        ideal_answer: 'A strong answer shows commitment to learning with specific examples like courses, projects, or communities.',
+        keywords: ['learning', 'technologies', 'growth', 'initiative', 'examples']
+      }
+    ];
+
+    const mediumBank = [
+      {
+        question: `Walk me through a technical decision you made recently and the trade-offs you considered.`,
+        ideal_answer: 'A strong answer covers options considered, decision criteria, trade-offs, implementation details, and outcome.',
+        keywords: ['trade-offs', 'decision', 'alternatives', 'implementation', 'outcome']
+      },
+      {
+        question: 'How do you debug a production issue when logs are incomplete?',
+        ideal_answer: 'A strong answer includes reproduction strategy, hypothesis testing, observability improvements, and rollback safety.',
+        keywords: ['debugging', 'hypothesis', 'observability', 'rollback', 'incident']
+      },
+      {
+        question: 'How do you ensure your code remains maintainable as the system grows?',
+        ideal_answer: 'A strong answer includes testing strategy, code reviews, modularity, documentation, and refactoring discipline.',
+        keywords: ['testing', 'modularity', 'reviews', 'documentation', 'refactoring']
+      },
+      {
+        question: 'Describe a time when you had to collaborate with a challenging team member.',
+        ideal_answer: 'A strong answer shows empathy, communication, and focus on shared goals rather than blame.',
+        keywords: ['collaboration', 'communication', 'resolution', 'empathy', 'teamwork']
+      },
+      {
+        question: 'How would you approach optimizing a slow-running system?',
+        ideal_answer: 'A strong answer starts with measurement, includes profiling strategy, and discusses trade-offs.',
+        keywords: ['profiling', 'optimization', 'measurement', 'bottleneck', 'improvement']
+      }
+    ];
+
+    const hardBank = [
+      {
+        question: 'Design a resilient architecture for a high-traffic service and explain failure handling.',
+        ideal_answer: 'A strong answer includes scaling strategy, bottleneck analysis, caching, retries, circuit breakers, and monitoring.',
+        keywords: ['scalability', 'resilience', 'caching', 'retries', 'monitoring']
+      },
+      {
+        question: 'Describe how you would reduce latency in a system with mixed read/write workloads.',
+        ideal_answer: 'A strong answer includes profiling, query optimization, caching strategy, async processing, and measurement.',
+        keywords: ['latency', 'profiling', 'optimization', 'caching', 'throughput']
+      },
+      {
+        question: 'How would you lead a critical migration with near-zero downtime?',
+        ideal_answer: 'A strong answer includes rollout strategy, feature flags, backward compatibility, monitoring, and rollback plans.',
+        keywords: ['migration', 'rollout', 'compatibility', 'rollback', 'risk']
+      },
+      {
+        question: 'Tell me about a time you made a critical decision that had long-term consequences.',
+        ideal_answer: 'A strong answer reflects thoughtfulness about impact, learning from outcomes, and ownership.',
+        keywords: ['decision', 'impact', 'ownership', 'reflection', 'learning']
+      },
+      {
+        question: 'How do you balance technical excellence with shipping on deadline?',
+        ideal_answer: 'A strong answer shows pragmatism, prioritization, and realistic assessment of trade-offs.',
+        keywords: ['prioritization', 'trade-off', 'pragmatism', 'deadline', 'quality']
+      }
+    ];
+
+    const bank = difficulty === 'hard' ? hardBank : difficulty === 'easy' ? easyBank : mediumBank;
+    
+    // Find a question that hasn't been asked yet
+    let nextQuestion = null;
+    for (const question of bank) {
+      if (!askedQuestions.has(question.question.trim().toLowerCase())) {
+        nextQuestion = question;
+        break;
+      }
+    }
+    
+    // Fallback if all questions have been asked
+    if (!nextQuestion) {
+      nextQuestion = bank[qaHistory.length % bank.length];
+    }
+
+    return {
+      ...nextQuestion,
+      reaction,
+      role,
+      difficulty
     };
+  };
 
-    console.log('🎯 Generating question:', { role, difficulty, previous_qa_count: previous_qa?.length || 0, use_ai });
+  console.log('🎯 Generating question internally:', { role, difficulty, previous_qa_count: qaHistory.length, use_ai });
 
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-    // If no API key or use_ai is false, return mock question
-    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here' || !use_ai) {
-      console.warn('⚠️ No OpenAI API key or use_ai=false - returning mock question');
-      return res.json(buildFallbackQuestion());
-    }
+  // If no API key or use_ai is false, return mock question
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here' || !use_ai) {
+    console.warn('⚠️ No OpenAI API key or use_ai=false - returning mock question');
+    return buildFallbackQuestion();
+  }
 
-    // Build AI prompt for context-aware question generation
-    let contextPrompt = `You are an expert technical interviewer for a ${role} position. Generate a ${difficulty} difficulty interview question.`;
+  // Build AI prompt for context-aware question generation
+  let contextPrompt = `You are conducting a live, interactive technical interview for a ${role} position.
+Your tone should be professional, encouraging, warm, and highly engaging.
 
-    if (previous_qa && previous_qa.length > 0) {
-      contextPrompt += `\n\nPrevious interview context:\n`;
-      previous_qa.slice(-3).forEach((qa: any, i: number) => {
-        contextPrompt += `Q${i+1}: ${qa.question}\nA${i+1}: ${qa.answer.substring(0, 200)}...\n\n`;
-      });
-      contextPrompt += `\nBased on the candidate's previous answers, generate a relevant follow-up question that:
-1. Builds on their responses
-2. Tests deeper understanding
-3. Is appropriate for ${difficulty} difficulty
-4. Is specific to ${role} role
-5. Is different from previously asked questions`;
-    }
+Generate a ${difficulty} difficulty interview question.`;
 
-    contextPrompt += `\n\nRespond in JSON format:
+  if (qaHistory && qaHistory.length > 0) {
+    const lastQAIndex = qaHistory.length - 1;
+    const lastQA = qaHistory[lastQAIndex];
+
+    contextPrompt += `\n\nPrevious interview context:\n`;
+    qaHistory.slice(-3).forEach((qa: any, i: number) => {
+      contextPrompt += `Q${i+1}: ${qa.question}\nA${i+1}: ${qa.answer}\n\n`;
+    });
+
+    contextPrompt += `
+Based on the candidate's last answer ("${lastQA.answer}"), follow these critical instructions for the "reaction" and the next "question":
+
+1. EVALUATE THE ANSWER QUALITY:
+   - Identify if the answer was strong, detailed, brief, vague, incorrect, or a simple greeting/introduction/name introduction.
+   - If they just stated their name or introduced themselves (e.g. "My name is Sandeep"), greet them warmly and naturally (e.g., "Nice to meet you, Sandeep! Let's dive in..."). Do NOT say "Interesting approach" or "Nice approach" to an introduction.
+   - If their answer was strong, compliment them specifically on their approach, reasoning, or metrics (e.g., "That's a very solid way to optimize that database query. I like how you analyzed the index trade-offs.").
+   - If their answer was weak, brief, or missed key details, politely critique it or highlight the gaps (e.g., "Thanks for that brief overview. You mentioned using a cache, but didn't touch on cache invalidation...").
+
+2. DECIDE ON A FOLLOW-UP OR NEW QUESTION:
+   - If their last answer created a "situation", left a "hole", or contained interesting claims/technologies, ask a specific follow-up question (cross-question) digging deeper into that claim (e.g. asking how they handled a specific challenge they mentioned, or how they resolved the gap you highlighted).
+   - If their last answer was fully complete and resolved, transition smoothly and ask a new relevant question corresponding to the ${difficulty} difficulty and ${role} role.
+
+3. WRITE A CONVERSATIONAL "reaction":
+   - The "reaction" string must contain ONLY your natural verbal response to their last answer (e.g., your greeting, compliment, or constructive critique), transitioning smoothly to the next question.
+   - The "reaction" should NOT repeat the next question itself. It will be spoken first, followed immediately by the "question".
+   - Keep the reaction concise (1-2 sentences), warm, and natural. Avoid generic/monotone replies like "Interesting approach" or "Nice approach" unless they actually explained a specific approach.`;
+  } else {
+    contextPrompt += `\n\nThis is the beginning of the interview. Since there are no previous answers, the "reaction" field should be empty or a brief warm welcome.`;
+  }
+
+  contextPrompt += `\n\nRespond ONLY in JSON format:
 {
-  "question": "the interview question",
+  "reaction": "your verbal feedback/greeting to their previous answer, transitioning to the next question (empty if first question)",
+  "question": "the next interview question (either a follow-up/cross-question or a new question)",
+  "is_follow_up": true or false,
   "ideal_answer": "what a strong answer would include",
   "keywords": ["key", "concepts", "to", "look", "for"],
   "role": "${role}",
   "difficulty": "${difficulty}"
 }`;
 
-    // Call OpenAI API
+  let content = "";
+  let provider = "OpenAI";
+
+  try {
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -505,92 +544,128 @@ app.post('/api/interview/generate-question', async (req, res) => {
           { role: 'user', content: contextPrompt }
         ],
         temperature: 0.8,
-        max_tokens: 500,
+        max_tokens: 600,
       }),
     });
 
-    if (!openaiResponse.ok) {
+    if (openaiResponse.ok) {
+      const openaiData = await openaiResponse.json();
+      content = openaiData.choices[0].message.content;
+    } else {
       const errorText = await openaiResponse.text();
-      console.error('OpenAI API error:', openaiResponse.status, errorText);
-
-      // Keep the interview flow running even if OpenAI is unavailable/unauthorized.
-      return res.json(buildFallbackQuestion());
+      console.warn('⚠️ OpenAI API failed. Trying Groq fallback...', openaiResponse.status, errorText);
+      throw new Error(`OpenAI API failed with status ${openaiResponse.status}`);
     }
-
-    const openaiData = await openaiResponse.json();
-    const content = openaiData.choices[0].message.content;
-
-    // Parse JSON response
-    const questionData = JSON.parse(content);
-    console.log('✅ Question generated:', questionData.question);
-
-    // Add smart reaction to AI-generated response
-    const lastAnswer = String(qaHistory[qaHistory.length - 1]?.answer || '').trim();
-    const lastQuestion = String(qaHistory[qaHistory.length - 1]?.question || '').trim();
-    const { reaction, crossQuestion } = generateSmartReactionAndQuestion(lastAnswer, lastQuestion, difficulty, normalizedRole, qaHistory);
+  } catch (openaiError: any) {
+    console.warn('⚠️ OpenAI failed. Checking for Groq key...', openaiError.message || openaiError);
     
-    res.json({
+    const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+    if (GROQ_API_KEY && GROQ_API_KEY !== 'your-groq-api-key-here') {
+      try {
+        console.log('📡 Calling Groq fallback Chat Completions API...');
+        provider = "Groq";
+        const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+              { role: 'system', content: 'You are an expert technical interviewer. Always respond with valid JSON.' },
+              { role: 'user', content: contextPrompt }
+            ],
+            temperature: 0.8,
+            max_tokens: 600,
+            response_format: { type: "json_object" }
+          }),
+        });
+
+        if (groqResponse.ok) {
+          const groqData = await groqResponse.json();
+          content = groqData.choices[0].message.content;
+          console.log('✅ Groq response received successfully!');
+        } else {
+          const errorText = await groqResponse.text();
+          console.error('❌ Groq API error:', groqResponse.status, errorText);
+          throw new Error(`Groq API failed with status ${groqResponse.status}`);
+        }
+      } catch (groqError: any) {
+        console.error('❌ Groq fallback also failed:', groqError.message || groqError);
+        return buildFallbackQuestion();
+      }
+    } else {
+      console.error('❌ No Groq API key configured for fallback.');
+      return buildFallbackQuestion();
+    }
+  }
+
+  // Parse JSON response
+  try {
+    const questionData = JSON.parse(content);
+    console.log(`✅ Question generated using ${provider}:`, questionData.question);
+
+    let reaction = questionData.reaction;
+    if (!reaction || reaction.trim() === '') {
+      const lastAnswer = String(qaHistory[qaHistory.length - 1]?.answer || '').trim();
+      const lastQuestion = String(qaHistory[qaHistory.length - 1]?.question || '').trim();
+      const fallbackObj = generateSmartReactionAndQuestion(lastAnswer, lastQuestion, difficulty, normalizedRole, qaHistory);
+      reaction = fallbackObj.reaction;
+    }
+    
+    return {
       ...questionData,
       reaction
-    });
-
-  } catch (error) {
-    console.error('❌ Question generation error:', error);
-
-    const fallbackHistory = (Array.isArray(req.body?.previous_qa) ? req.body.previous_qa : []) as Array<{ question?: string; answer?: string }>;
-    const lastAnswer = String(fallbackHistory[fallbackHistory.length - 1]?.answer || '').trim();
-    const lastQuestion = String(fallbackHistory[fallbackHistory.length - 1]?.question || '').trim();
-    const roleText = String(req.body?.role || 'software engineer').replace('_', ' ');
-    const diffText = String(req.body?.difficulty || 'medium');
-
-    const { reaction, crossQuestion } = generateSmartReactionAndQuestion(lastAnswer, lastQuestion, diffText, roleText, fallbackHistory);
-
-    res.json({
-      question: crossQuestion || `Thanks. Based on your previous response, what would you improve if you had to implement that ${roleText} solution again?`,
-      ideal_answer: 'A strong answer should cover lessons learned, trade-offs revisited, and a concrete improvement plan.',
-      keywords: ['lessons learned', 'improvements', 'trade-offs', 'plan'],
-      reaction,
-      role: req.body?.role,
-      difficulty: req.body?.difficulty || 'medium'
-    });
+    };
+  } catch (parseErr) {
+    console.error('❌ JSON parsing failed for dynamic question, using fallback.', content);
+    return buildFallbackQuestion();
   }
-});
+}
 
-// Evaluate Answer API (AI-powered answer evaluation)
-app.post('/api/interview/evaluate', async (req, res) => {
-  try {
-    const { question, user_answer, ideal_answer, keywords, role } = req.body;
+// Core async function to evaluate candidate answer (using OpenAI with Groq fallback)
+async function evaluateAnswerInternal(
+  question: string,
+  user_answer: string,
+  ideal_answer: string,
+  keywords: string[],
+  role: string
+): Promise<any> {
+  console.log('📊 Evaluating answer internally for role:', role);
+  console.log('   Question:', question.substring(0, 60) + '...');
+  console.log('   Answer length:', user_answer.length, 'chars');
 
-    console.log('📊 Evaluating answer for role:', role);
-    console.log('   Question:', question.substring(0, 60) + '...');
-    console.log('   Answer length:', user_answer.length, 'chars');
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+  // Helper to fallback to rule-based evaluation
+  const buildFallbackEvaluation = () => {
+    const evaluation = evaluateAnswerQuality(user_answer, keywords || [], role);
+    return {
+      final_score: evaluation.final_score,
+      grade: evaluation.grade,
+      score_breakdown: {
+        technical_accuracy: Math.round(evaluation.keyword_coverage / Math.max(keywords?.length || 1, 1) * 10),
+        depth_of_knowledge: Math.round(evaluation.depth_score),
+        clarity_score: Math.round(evaluation.clarity_score),
+        completeness: Math.round((evaluation.depth_score + evaluation.structure_quality) / 2),
+        example_quality: evaluation.has_examples ? 8 : 4
+      },
+      strengths: evaluation.strengths,
+      improvements: evaluation.improvements,
+      feedback: `Score: ${evaluation.final_score}%. ${evaluation.has_examples ? 'Good use of examples. ' : ''}${evaluation.has_metrics ? 'Strong metrics provided. ' : ''}${evaluation.improvements[0] ? `To improve: ${evaluation.improvements[0].toLowerCase()}.` : 'Well done!'}`,
+      keyword_coverage: evaluation.keyword_coverage
+    };
+  };
 
-    // If no API key, return mock evaluation
-    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
-      console.warn('⚠️ No OpenAI API key - returning smart evaluation');
-      const evaluation = evaluateAnswerQuality(user_answer, keywords || [], role);
-      console.log(`✅ Smart evaluation score: ${evaluation.final_score}% (Grade: ${evaluation.grade})`);
-      return res.json({
-        final_score: evaluation.final_score,
-        grade: evaluation.grade,
-        score_breakdown: {
-          technical_accuracy: Math.round(evaluation.keyword_coverage / Math.max(keywords?.length || 1, 1) * 10),
-          depth_of_knowledge: Math.round(evaluation.depth_score),
-          clarity_score: Math.round(evaluation.clarity_score),
-          completeness: Math.round((evaluation.depth_score + evaluation.structure_quality) / 2),
-          example_quality: evaluation.has_examples ? 8 : 4
-        },
-        strengths: evaluation.strengths,
-        improvements: evaluation.improvements,
-        feedback: `Score: ${evaluation.final_score}%. ${evaluation.has_examples ? 'Good use of examples. ' : ''}${evaluation.has_metrics ? 'Strong metrics provided. ' : ''}${evaluation.improvements[0] ? `To improve: ${evaluation.improvements[0].toLowerCase()}.` : 'Well done!'}`,
-        keyword_coverage: evaluation.keyword_coverage
-      });
-    }
+  // If no API key, return mock evaluation
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    console.warn('⚠️ No OpenAI API key - returning smart evaluation');
+    return buildFallbackEvaluation();
+  }
 
-    // Build evaluation prompt
-    const evalPrompt = `Evaluate this ${role} interview answer:
+  // Build evaluation prompt
+  const evalPrompt = `Evaluate this ${role} interview answer:
 
 Question: ${question}
 
@@ -605,11 +680,11 @@ Provide a detailed evaluation in JSON format:
   "final_score": <number 0-100>,
   "grade": "<letter grade A-F>",
   "score_breakdown": {
-    "technical_accuracy": <1-10>,
-    "depth_of_knowledge": <1-10>,
-    "clarity_score": <1-10>,
-    "completeness": <1-10>,
-    "example_quality": <1-10>
+    "technical_accuracy": <number 1-10>,
+    "depth_of_knowledge": <number 1-10>,
+    "clarity_score": <number 1-10>,
+    "completeness": <number 1-10>,
+    "example_quality": <number 1-10>
   },
   "strengths": ["strength 1", "strength 2"],
   "improvements": ["improvement 1", "improvement 2"],
@@ -617,7 +692,10 @@ Provide a detailed evaluation in JSON format:
   "keyword_coverage": <count of keywords covered>
 }`;
 
-    // Call OpenAI API
+  let content = "";
+  let provider = "OpenAI";
+
+  try {
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -635,62 +713,128 @@ Provide a detailed evaluation in JSON format:
       }),
     });
 
-    if (!openaiResponse.ok) {
+    if (openaiResponse.ok) {
+      const openaiData = await openaiResponse.json();
+      content = openaiData.choices[0].message.content;
+    } else {
       const errorText = await openaiResponse.text();
-      console.error('OpenAI API error:', openaiResponse.status, errorText);
-
-      const evaluation = evaluateAnswerQuality(user_answer, keywords || [], role);
-      return res.json({
-        final_score: evaluation.final_score,
-        grade: evaluation.grade,
-        score_breakdown: {
-          technical_accuracy: Math.round(evaluation.keyword_coverage / Math.max(keywords?.length || 1, 1) * 10),
-          depth_of_knowledge: Math.round(evaluation.depth_score),
-          clarity_score: Math.round(evaluation.clarity_score),
-          completeness: Math.round((evaluation.depth_score + evaluation.structure_quality) / 2),
-          example_quality: evaluation.has_examples ? 8 : 4
-        },
-        strengths: evaluation.strengths,
-        improvements: evaluation.improvements,
-        feedback: `Score: ${evaluation.final_score}%. ${evaluation.has_examples ? 'Good use of examples. ' : ''}${evaluation.has_metrics ? 'Strong metrics provided. ' : ''}${evaluation.improvements[0] ? `To improve: ${evaluation.improvements[0].toLowerCase()}.` : 'Well done!'}`,
-        keyword_coverage: evaluation.keyword_coverage
-      });
+      console.warn('⚠️ OpenAI evaluate API failed. Trying Groq fallback...', openaiResponse.status, errorText);
+      throw new Error(`OpenAI API failed with status ${openaiResponse.status}`);
     }
+  } catch (openaiError: any) {
+    console.warn('⚠️ OpenAI evaluate failed. Checking for Groq key...', openaiError.message || openaiError);
+    
+    const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+    if (GROQ_API_KEY && GROQ_API_KEY !== 'your-groq-api-key-here') {
+      try {
+        console.log('📡 Calling Groq fallback Chat Completions API for evaluation...');
+        provider = "Groq";
+        const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+              { role: 'system', content: 'You are an expert technical interviewer evaluating candidates. Be fair but thorough. Always respond with valid JSON.' },
+              { role: 'user', content: evalPrompt }
+            ],
+            temperature: 0.7,
+            max_tokens: 800,
+            response_format: { type: "json_object" }
+          }),
+        });
 
-    const openaiData = await openaiResponse.json();
-    const content = openaiData.choices[0].message.content;
+        if (groqResponse.ok) {
+          const groqData = await groqResponse.json();
+          content = groqData.choices[0].message.content;
+          console.log('✅ Groq response received successfully for evaluation!');
+        } else {
+          const errorText = await groqResponse.text();
+          console.error('❌ Groq evaluate API error:', groqResponse.status, errorText);
+          throw new Error(`Groq API failed with status ${groqResponse.status}`);
+        }
+      } catch (groqError: any) {
+        console.error('❌ Groq evaluate fallback also failed:', groqError.message || groqError);
+        return buildFallbackEvaluation();
+      }
+    } else {
+      return buildFallbackEvaluation();
+    }
+  }
 
-    // Parse JSON response
+  try {
     const evaluation = JSON.parse(content);
-    console.log('✅ Evaluation complete - Score:', evaluation.final_score, 'Grade:', evaluation.grade);
+    console.log(`✅ Evaluation complete (${provider}) - Score:`, evaluation.final_score, 'Grade:', evaluation.grade);
+    return evaluation;
+  } catch (parseErr) {
+    console.error('❌ JSON parsing failed for dynamic evaluation, using fallback.', content);
+    return buildFallbackEvaluation();
+  }
+}
 
-    res.json(evaluation);
+// Core async function to transcribe WebM audio buffer using Groq Whisper API
+async function transcribeAudioInternal(audioBuffer: Buffer, mimeType: string = 'audio/webm'): Promise<string> {
+  const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+  if (!GROQ_API_KEY || GROQ_API_KEY === 'your-groq-api-key-here') {
+    console.warn('⚠️ No Groq API key configured - returning empty transcript');
+    return "";
+  }
 
+  console.log('📡 Calling Groq Whisper API for transcription internally...');
+  const formData = new FormData();
+  formData.append('file', audioBuffer, {
+    filename: 'audio.webm',
+    contentType: mimeType,
+  });
+  formData.append('model', 'whisper-large-v3');
+  formData.append('language', 'en');
+  formData.append('response_format', 'json');
+
+  const groqResponse = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      ...formData.getHeaders(),
+    },
+    body: formData,
+  });
+
+  if (!groqResponse.ok) {
+    const errorText = await groqResponse.text();
+    console.error('❌ Groq transcribe API error internally:', groqResponse.status, errorText);
+    throw new Error(`Groq transcription failed with status ${groqResponse.status}`);
+  }
+
+  const groqData = await groqResponse.json();
+  return groqData.text || '';
+}
+
+// Generate Question API (REST Endpoint)
+app.post('/api/interview/generate-question', async (req, res) => {
+  try {
+    const { role, difficulty, previous_qa, use_ai } = req.body;
+    const result = await generateQuestionInternal(role, difficulty, previous_qa, use_ai);
+    res.json(result);
   } catch (error) {
-    console.error('❌ Evaluation error:', error);
-    const evaluation = evaluateAnswerQuality(
-      (req.body?.user_answer || '').toString(),
-      (req.body?.keywords || []) as string[],
-      (req.body?.role || 'software_engineer').toString()
-    );
-    res.json({
-      final_score: evaluation.final_score,
-      grade: evaluation.grade,
-      score_breakdown: {
-        technical_accuracy: Math.round(evaluation.keyword_coverage / Math.max((req.body?.keywords?.length || 1), 1) * 10),
-        depth_of_knowledge: Math.round(evaluation.depth_score),
-        clarity_score: Math.round(evaluation.clarity_score),
-        completeness: Math.round((evaluation.depth_score + evaluation.structure_quality) / 2),
-        example_quality: evaluation.has_examples ? 8 : 4
-      },
-      strengths: evaluation.strengths,
-      improvements: evaluation.improvements,
-      feedback: `Score: ${evaluation.final_score}%. ${evaluation.improvements[0] ? `To improve: ${evaluation.improvements[0].toLowerCase()}.` : 'Well done!'}`
-    });
+    console.error('❌ REST generate-question error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-// Alias for comprehensive evaluation (same endpoint, different name for compatibility)
+// Evaluate Answer API (REST Endpoint)
+app.post('/api/interview/evaluate', async (req, res) => {
+  try {
+    const { question, user_answer, ideal_answer, keywords, role } = req.body;
+    const result = await evaluateAnswerInternal(question, user_answer, ideal_answer, keywords, role);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ REST evaluate error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
 app.post('/api/interview/evaluate-answer-comprehensive', async (req, res) => {
   // Just forward to the main evaluate endpoint
   try {
@@ -870,14 +1014,6 @@ app.post('/api/interview/converse', async (req, res) => {
 
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-    // If no API key, return fallback response
-    if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
-      console.warn('⚠️ No OpenAI API key - using local fallback heuristics');
-      const fallbackResult = fallbackConverse(question || '', user_input || '');
-      return res.json(fallbackResult);
-    }
-
-    // Call OpenAI GPT-3.5 to classify and respond
     const prompt = `Analyze the candidate's input in response to the active interview question.
 
 Active Question: "${question}"
@@ -900,35 +1036,90 @@ Respond ONLY in JSON format:
   "reply": "Conversational response to candidate, followed by restating the question if type is repeat or clarification. Otherwise null."
 }`;
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: 'You are an expert technical interviewer. Always respond with valid JSON.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 300,
-      }),
-    });
+    let content = "";
+    let provider = "OpenAI";
 
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      console.error('OpenAI API error:', openaiResponse.status, errorText);
-      const fallbackResult = fallbackConverse(question || '', user_input || '');
-      return res.json(fallbackResult);
+    try {
+      if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+        throw new Error("No OpenAI API key configured");
+      }
+
+      // Call OpenAI GPT-3.5 to classify and respond
+      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'You are an expert technical interviewer. Always respond with valid JSON.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.7,
+          max_tokens: 300,
+        }),
+      });
+
+      if (openaiResponse.ok) {
+        const openaiData = await openaiResponse.json();
+        content = openaiData.choices[0].message.content;
+      } else {
+        const errorText = await openaiResponse.text();
+        console.warn('⚠️ OpenAI converse API failed. Trying Groq fallback...', openaiResponse.status, errorText);
+        throw new Error(`OpenAI API failed with status ${openaiResponse.status}`);
+      }
+    } catch (openaiError: any) {
+      console.warn('⚠️ OpenAI converse failed. Checking for Groq key...', openaiError.message || openaiError);
+      
+      const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+      if (GROQ_API_KEY && GROQ_API_KEY !== 'your-groq-api-key-here') {
+        try {
+          console.log('📡 Calling Groq fallback Chat Completions API for converse classification...');
+          provider = "Groq";
+          const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${GROQ_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: 'llama-3.1-8b-instant',
+              messages: [
+                { role: 'system', content: 'You are an expert technical interviewer. Always respond with valid JSON.' },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.7,
+              max_tokens: 300,
+              response_format: { type: "json_object" }
+            }),
+          });
+
+          if (groqResponse.ok) {
+            const groqData = await groqResponse.json();
+            content = groqData.choices[0].message.content;
+            console.log('✅ Groq response received successfully for converse classification!');
+          } else {
+            const errorText = await groqResponse.text();
+            console.error('❌ Groq converse API error:', groqResponse.status, errorText);
+            throw new Error(`Groq API failed with status ${groqResponse.status}`);
+          }
+        } catch (groqError: any) {
+          console.error('❌ Groq converse fallback also failed:', groqError.message || groqError);
+          const fallbackResult = fallbackConverse(question || '', user_input || '');
+          return res.json(fallbackResult);
+        }
+      } else {
+        console.error('❌ No Groq API key configured for fallback converse.');
+        const fallbackResult = fallbackConverse(question || '', user_input || '');
+        return res.json(fallbackResult);
+      }
     }
 
-    const openaiData = await openaiResponse.json();
-    const content = openaiData.choices[0].message.content;
     const result = JSON.parse(content);
     
-    console.log(`✅ Classification: ${result.type}`);
+    console.log(`✅ Classification (${provider}): ${result.type}`);
     if (result.reply) {
       console.log(`   Reply: "${result.reply}"`);
     }
@@ -1009,6 +1200,69 @@ app.post('/api/interview/text-to-speech', async (req, res) => {
   }
 });
 
+// Define state structure for voice interview
+interface VoiceInterviewState {
+  config: {
+    userId: string;
+    interviewId: string;
+    jobRole: string;
+    interviewType: string;
+    difficulty: string;
+    maxQuestions: number;
+  };
+  questionsAsked: number;
+  previous_qa: Array<{ question: string; answer: string }>;
+  evaluations: any[];
+  currentQuestion: {
+    question: string;
+    ideal_answer: string;
+    keywords: string[];
+    role: string;
+    difficulty: string;
+    reaction?: string;
+  };
+  audioChunks: Buffer[];
+}
+
+const voiceInterviews = new Map<string, VoiceInterviewState>();
+
+function generateFinalReport(previous_qa: Array<{ question: string; answer: string }>, evaluations: any[]) {
+  const scores = evaluations.map(e => e.final_score || e.score || 0);
+  const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  
+  let grade = 'F';
+  if (avgScore >= 90) grade = 'A';
+  else if (avgScore >= 80) grade = 'B';
+  else if (avgScore >= 70) grade = 'C';
+  else if (avgScore >= 60) grade = 'D';
+
+  const strengths = Array.from(new Set(evaluations.flatMap(e => e.strengths || []))).slice(0, 5);
+  const weaknesses = Array.from(new Set(evaluations.flatMap(e => e.improvements || []))).slice(0, 5);
+  
+  const sectionScores = {
+    technical: Math.round(avgScore * 0.95),
+    communication: Math.round(avgScore * 0.92),
+    confidence: Math.round(avgScore * 0.88),
+    problemSolving: Math.round(avgScore * 0.90),
+    clarity: Math.round(avgScore * 0.94)
+  };
+
+  const improvementPlan = weaknesses.map((w) => `Focus on: ${w}`);
+  if (improvementPlan.length === 0) {
+    improvementPlan.push("Continue practicing technical explanations and structure.");
+  }
+
+  return {
+    overallScore: avgScore,
+    grade,
+    sectionScores,
+    strengths: strengths.length > 0 ? strengths : ["Answered questions clearly"],
+    weaknesses: weaknesses.length > 0 ? weaknesses : ["Add more details to technical answers"],
+    detailedQuestionAnalysis: evaluations,
+    improvementPlan
+  };
+}
+
 // Voice Interview Namespace
 // Note: Frontend connects via `io('${WS_URL}/voice-interview')`
 // This creates a connection to the /voice-interview namespace.
@@ -1018,82 +1272,214 @@ voiceInterviewNamespace.on('connection', (socket) => {
   console.log('Client connected to /voice-interview namespace:', socket.id);
 
   // Handle Init Event
-  socket.on('init-voice-interview', (config) => {
+  socket.on('init-voice-interview', async (config) => {
     console.log('Received init-voice-interview:', config);
     
-    // Simulate processing delay
-    setTimeout(() => {
-      // Respond with success
-      socket.emit('interview-initialized', {
-        interviewId: config.interviewId,
-        status: 'ready'
-      });
-      console.log('Sent interview-initialized');
+    const firstQuestion = {
+      question: "Tell me about yourself and your background.",
+      ideal_answer: "A strong answer should include: your current role and experience, relevant technical skills, notable achievements or projects, and what motivates you professionally.",
+      keywords: ["experience", "background", "skills", "expertise", "achievements", "passion", "goals"],
+      role: config.jobRole || 'software_engineer',
+      difficulty: 'easy',
+      reaction: ''
+    };
 
-      // Send first question
-      setTimeout(() => {
-        socket.emit('next-question', {
-            question: "Tell me about yourself and your background.",
-            audio: "", // Text-only for now
-            isFollowUp: false,
-            expectedDuration: 60,
-            currentProgress: {
-                questionsAsked: 1,
-                maxQuestions: config.maxQuestions || 5
-            }
-        });
-        console.log('Sent first question');
-      }, 1000);
+    voiceInterviews.set(socket.id, {
+      config: {
+        userId: config.userId,
+        interviewId: config.interviewId,
+        jobRole: config.jobRole || 'Software Engineer',
+        interviewType: config.interviewType || 'TECHNICAL',
+        difficulty: config.difficulty || 'MEDIUM',
+        maxQuestions: config.maxQuestions || 5,
+      },
+      questionsAsked: 1,
+      previous_qa: [],
+      evaluations: [],
+      currentQuestion: firstQuestion,
+      audioChunks: []
+    });
+
+    // Respond with success
+    socket.emit('interview-initialized', {
+      interviewId: config.interviewId,
+      status: 'ready',
+      question: firstQuestion.question
+    });
+    console.log('Sent interview-initialized');
+
+    // Send first question
+    setTimeout(() => {
+      socket.emit('next-question', {
+        question: firstQuestion.question,
+        audio: "", // Fall back to client TTS
+        isFollowUp: false,
+        reaction: "",
+        expectedDuration: 60,
+        currentProgress: {
+          questionsAsked: 1,
+          maxQuestions: config.maxQuestions || 5
+        }
+      });
+      console.log('Sent first question');
     }, 1000);
   });
 
   // Handle Recording Start
   socket.on('start-recording', (data) => {
     console.log('Start recording for:', data.interviewId);
+    const state = voiceInterviews.get(socket.id);
+    if (state) {
+      state.audioChunks = [];
+    }
   });
 
   // Handle Audio Chunk
   socket.on('audio-chunk', (data) => {
-    // In a real app, stream this to STT service
-    // console.log('Received audio chunk for:', data.interviewId);
+    const state = voiceInterviews.get(socket.id);
+    if (state && data.chunk) {
+      state.audioChunks.push(Buffer.from(data.chunk, 'base64'));
+    }
   });
 
   // Handle Recording Stop
-  socket.on('stop-recording', (data) => {
+  socket.on('stop-recording', async (data) => {
     console.log('Stop recording for:', data.interviewId);
     
-    // Simulate AI processing and response
-    setTimeout(() => {
-        // Send mock evaluation
-        socket.emit('evaluation', {
-            score: 85,
-            feedback: "That was a good introduction. You covered your background well.",
-            keyPointsCovered: ["Background", "Experience", "Skills"],
-            missedPoints: ["Specific achievements"],
-            fillerWordsCount: 2
-        });
-        console.log('Sent evaluation');
+    const state = voiceInterviews.get(socket.id);
+    if (!state) {
+      console.error('No state found for socket:', socket.id);
+      return;
+    }
 
-        // Send next question after evaluation
-        // Send next question after evaluation
+    try {
+      // 1. Transcribe audio chunks or fallback to client transcript
+      let userAnswer = data.transcript || '';
+      
+      if (!userAnswer && state.audioChunks.length > 0) {
+        console.log('Transcribing accumulated audio chunks...');
+        const audioBuffer = Buffer.concat(state.audioChunks);
+        if (audioBuffer.length > 0) {
+          try {
+            userAnswer = await transcribeAudioInternal(audioBuffer, 'audio/webm');
+          } catch (trError) {
+            console.error('Transcription error:', trError);
+          }
+        }
+      }
+
+      if (!userAnswer || userAnswer.trim() === '') {
+        userAnswer = "No response was recorded.";
+      }
+
+      // Emit transcription complete
+      socket.emit('transcription-complete', {
+        transcription: userAnswer
+      });
+
+      // Emit evaluating state
+      socket.emit('evaluating', {
+        status: 'evaluating'
+      });
+
+      // 2. Evaluate answer
+      console.log('Evaluating answer dynamically...');
+      const evaluation = await evaluateAnswerInternal(
+        state.currentQuestion.question,
+        userAnswer,
+        state.currentQuestion.ideal_answer,
+        state.currentQuestion.keywords,
+        state.config.jobRole
+      );
+
+      state.evaluations.push(evaluation);
+      state.previous_qa.push({
+        question: state.currentQuestion.question,
+        answer: userAnswer
+      });
+
+      // Emit evaluation results
+      socket.emit('evaluation', {
+        score: evaluation.final_score || evaluation.score || 0,
+        feedback: evaluation.feedback || '',
+        keyPointsCovered: evaluation.strengths || [],
+        missedPoints: evaluation.improvements || [],
+        fillerWordsCount: 0
+      });
+
+      // 3. Generate next question or complete interview
+      if (state.questionsAsked >= state.config.maxQuestions) {
+        // Complete interview
+        const report = generateFinalReport(state.previous_qa, state.evaluations);
+        socket.emit('interview-completed', {
+          interviewId: state.config.interviewId,
+          report
+        });
+        console.log('Sent interview-completed');
+      } else {
+        // Determine difficulty dynamically
+        let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
+        const progressPercent = (state.questionsAsked / state.config.maxQuestions) * 100;
+        if (progressPercent < 30) {
+          difficulty = 'easy';
+        } else if (progressPercent < 70) {
+          difficulty = 'medium';
+        } else {
+          difficulty = 'hard';
+        }
+
+        console.log(`Generating question ${state.questionsAsked + 1}/${state.config.maxQuestions}...`);
+        const nextQuestionData = await generateQuestionInternal(
+          state.config.jobRole,
+          difficulty,
+          state.previous_qa,
+          true
+        );
+
+        state.currentQuestion = nextQuestionData;
+        state.questionsAsked += 1;
+
+        // Send next question after a brief delay for user to read feedback
         setTimeout(() => {
-             socket.emit('next-question', {
-                question: "What is your greatest strength?",
-                audio: "",
-                isFollowUp: false,
-                expectedDuration: 60,
-                currentProgress: {
-                    questionsAsked: 2,
-                    maxQuestions: 5
-                }
-            });
-            console.log('Sent next question');
+          socket.emit('next-question', {
+            question: nextQuestionData.question,
+            audio: "",
+            isFollowUp: nextQuestionData.is_follow_up || false,
+            reaction: nextQuestionData.reaction || "",
+            expectedDuration: 60,
+            currentProgress: {
+              questionsAsked: state.questionsAsked,
+              maxQuestions: state.config.maxQuestions
+            }
+          });
+          console.log('Sent next question:', nextQuestionData.question);
         }, 3000);
-    }, 2000);
+      }
+    } catch (error) {
+      console.error('Error in Socket.io stop-recording handler:', error);
+      socket.emit('interview-error', {
+        error: 'An error occurred while evaluating your response. Please try again.'
+      });
+    }
+  });
+
+  // Handle End Interview Event
+  socket.on('end-interview', (data) => {
+    console.log('End interview for:', data.interviewId);
+    const state = voiceInterviews.get(socket.id);
+    if (state) {
+      const report = generateFinalReport(state.previous_qa, state.evaluations);
+      socket.emit('interview-completed', {
+        interviewId: state.config.interviewId,
+        report
+      });
+      console.log('Sent interview-completed on end-interview');
+    }
   });
 
   socket.on('disconnect', () => {
     console.log('Client disconnected from /voice-interview namespace:', socket.id);
+    voiceInterviews.delete(socket.id);
   });
 });
 

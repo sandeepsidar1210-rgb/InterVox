@@ -856,6 +856,33 @@ export default function LiveInterview() {
               )
             ) : (
               <>
+                {/* AI Interviewer Feedback / Greeting */}
+                {(() => {
+                  const reactionText = questions[currentQuestion].reaction || (currentQuestion > 0 ? buildReactionFromAnswer(answersRef.current[currentQuestion - 1] || '') : '');
+                  if (!reactionText) return null;
+                  return (
+                    <p
+                      style={{
+                        fontFamily: "'Inter', sans-serif",
+                        fontWeight: 400,
+                        fontSize: "1.05rem",
+                        color: "#94A3B8",
+                        lineHeight: 1.5,
+                        textAlign: "center",
+                        marginBottom: "1rem",
+                        fontStyle: "italic",
+                        backgroundColor: "#0F172A",
+                        padding: "0.75rem 1rem",
+                        borderRadius: "0.75rem",
+                        border: "1px solid #334155",
+                        maxWidth: "600px"
+                      }}
+                    >
+                      "{reactionText}"
+                    </p>
+                  );
+                })()}
+
                 <p
                   style={{
                     fontFamily: "'Inter', sans-serif",

@@ -43,6 +43,7 @@ interface QuestionData {
   question: string;
   audio: string;
   isFollowUp: boolean;
+  reaction?: string;
   expectedDuration: number;
   currentProgress?: {
     questionsAsked: number;
@@ -207,13 +208,14 @@ class VoiceInterviewService {
   /**
    * Stop recording
    */
-  stopRecording(): void {
+  stopRecording(transcript?: string): void {
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop();
       
       // Notify server
       this.socket?.emit('stop-recording', {
         interviewId: this.currentInterviewId,
+        transcript: transcript || '',
       });
 
       console.log('🛑 Recording stopped');
