@@ -36,7 +36,7 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
         recognitionRef.current = new SpeechRecognition();
         recognitionRef.current.continuous = true;
         recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'en-US';
+        recognitionRef.current.lang = 'en-IN';
         
         recognitionRef.current.onresult = (event: any) => {
           let finalTranscript = '';

@@ -85,27 +85,38 @@ export function useSarvamTTS() {
         console.warn('⚠️ Received mock/empty audio from backend. Falling back to browser SpeechSynthesis.');
         
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = options.language || 'en-IN';
         
-        const voices = window.speechSynthesis.getVoices();
-        const indVoice = voices.find(v => v.lang.toLowerCase().includes('in'));
-        if (indVoice) {
-          utterance.voice = indVoice;
+        const speakTextFallback = () => {
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = options.language || 'en-IN';
+          
+          const voices = window.speechSynthesis.getVoices();
+          const indVoice = voices.find(v => v.lang.toLowerCase().includes('in'));
+          if (indVoice) {
+            utterance.voice = indVoice;
+          }
+          
+          utterance.onstart = () => {
+            setIsSpeaking(true);
+          };
+          utterance.onend = () => {
+            setIsSpeaking(false);
+          };
+          utterance.onerror = (e) => {
+            console.error('SpeechSynthesis error:', e);
+            setIsSpeaking(false);
+          };
+          
+          window.speechSynthesis.speak(utterance);
+        };
+
+        if (window.speechSynthesis.getVoices().length === 0) {
+          window.speechSynthesis.onvoiceschanged = () => {
+            speakTextFallback();
+          };
+        } else {
+          speakTextFallback();
         }
-        
-        utterance.onstart = () => {
-          setIsSpeaking(true);
-        };
-        utterance.onend = () => {
-          setIsSpeaking(false);
-        };
-        utterance.onerror = (e) => {
-          console.error('SpeechSynthesis error:', e);
-          setIsSpeaking(false);
-        };
-        
-        window.speechSynthesis.speak(utterance);
         return;
       }
 

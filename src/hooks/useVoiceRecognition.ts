@@ -40,7 +40,7 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       // ✅ OPTIMIZED SETTINGS for better performance
       recognitionRef.current.continuous = true; // Keep listening continuously
       recognitionRef.current.interimResults = true; // Show results as user speaks
-      recognitionRef.current.lang = 'en-US'; // Language
+      recognitionRef.current.lang = 'en-IN'; // Language
       recognitionRef.current.maxAlternatives = 3; // Get multiple alternatives for accuracy
       
       // Event: On start
