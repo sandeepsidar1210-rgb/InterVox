@@ -224,8 +224,12 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
   const reactions: string[] = [];
   let crossQuestion: string | null = null;
 
-  if (!answer) {
-    return { reaction: "Let's continue.", crossQuestion: null };
+  const isNoAnswer = !answer || 
+                     answer.trim() === '' || 
+                     /no response was recorded|no answer provided|skipped|skip/i.test(answer);
+
+  if (isNoAnswer) {
+    return { reaction: "Let's move to the next question.", crossQuestion: null };
   }
 
   // Extract specific claims for cross-questioning with more patterns
@@ -502,20 +506,25 @@ Generate a ${difficulty} difficulty interview question.`;
     contextPrompt += `
 Based on the candidate's last answer ("${lastQA.answer}"), follow these critical instructions for the "reaction" and the next "question":
 
-1. EVALUATE THE ANSWER QUALITY:
+1. DETECT EMPTY / MISSING ANSWERS:
+   - Check if the last answer was empty, blank, or equals "No response was recorded." or "No answer provided.".
+   - If the answer was empty/missing, the "reaction" field MUST be exactly "Let's move to the next question." or "Let's continue.". You must NOT evaluate, critique, or compliment it.
+
+2. EVALUATE THE ANSWER QUALITY (only if NOT empty/missing):
    - Identify if the answer was strong, detailed, brief, vague, incorrect, or a simple greeting/introduction/name introduction.
    - If they just stated their name or introduced themselves (e.g. "My name is Sandeep"), greet them warmly and naturally (e.g., "Nice to meet you, Sandeep! Let's dive in..."). Do NOT say "Interesting approach" or "Nice approach" to an introduction.
    - If their answer was strong, compliment them specifically on their approach, reasoning, or metrics (e.g., "That's a very solid way to optimize that database query. I like how you analyzed the index trade-offs.").
    - If their answer was weak, brief, or missed key details, politely critique it or highlight the gaps (e.g., "Thanks for that brief overview. You mentioned using a cache, but didn't touch on cache invalidation...").
 
-2. DECIDE ON A FOLLOW-UP OR NEW QUESTION:
+3. DECIDE ON A FOLLOW-UP OR NEW QUESTION:
    - Ask a specific follow-up question (cross-question) digging deeper ONLY if the candidate's last answer was proper, detailed, and complete. For example, if they detailed a specific project, approach, or technical decision, follow up on the trade-offs, technologies, or edge cases of that specific response.
    - If the candidate's last answer was NOT proper, was too brief, vague, or incomplete (e.g., they gave a very short response, said "I don't know" or "skip", or just introduced themselves), do NOT ask a follow-up question. Instead, transition smoothly to a standard new question corresponding to the ${difficulty} difficulty and ${role} role.
    - CRITICAL: Do NOT generate or repeat any question that has already been asked in the previous interview context history (the history of Q1, Q2, etc.). Always generate a completely new question on a different topic.
 
-3. WRITE A CONVERSATIONAL "reaction":
-   - The "reaction" string must contain ONLY your natural verbal response to their last answer (e.g., your greeting, compliment, or constructive critique), transitioning smoothly to the next question.
-   - The "reaction" should NOT repeat the next question itself. It will be spoken first, followed immediately by the "question".
+4. WRITE A CONVERSATIONAL "reaction" AND "question" SEPARATELY:
+   - The "reaction" string must contain ONLY your natural verbal response or feedback to their last answer (e.g., your greeting, compliment, or constructive critique), transitioning smoothly to the next question.
+   - The "reaction" must NEVER contain any question, question mark, or follow-up question prompt.
+   - The actual follow-up or new question must be placed ENTIRELY inside the "question" field.
    - Keep the reaction concise (1-2 sentences), warm, and natural. Avoid generic/monotone replies like "Interesting approach" or "Nice approach" unless they actually explained a specific approach.`;
   } else {
     contextPrompt += `\n\nThis is the beginning of the interview. Since there are no previous answers, the "reaction" field should be empty or a brief warm welcome.`;
