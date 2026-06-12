@@ -511,6 +511,7 @@ Based on the candidate's last answer ("${lastQA.answer}"), follow these critical
 2. DECIDE ON A FOLLOW-UP OR NEW QUESTION:
    - Ask a specific follow-up question (cross-question) digging deeper ONLY if the candidate's last answer was proper, detailed, and complete. For example, if they detailed a specific project, approach, or technical decision, follow up on the trade-offs, technologies, or edge cases of that specific response.
    - If the candidate's last answer was NOT proper, was too brief, vague, or incomplete (e.g., they gave a very short response, said "I don't know" or "skip", or just introduced themselves), do NOT ask a follow-up question. Instead, transition smoothly to a standard new question corresponding to the ${difficulty} difficulty and ${role} role.
+   - CRITICAL: Do NOT generate or repeat any question that has already been asked in the previous interview context history (the history of Q1, Q2, etc.). Always generate a completely new question on a different topic.
 
 3. WRITE A CONVERSATIONAL "reaction":
    - The "reaction" string must contain ONLY your natural verbal response to their last answer (e.g., your greeting, compliment, or constructive critique), transitioning smoothly to the next question.
@@ -972,6 +973,15 @@ Provide a detailed evaluation in JSON format:
 function fallbackConverse(question: string, userInput: string) {
   const input = userInput.trim().toLowerCase();
   
+  // If the user indicates they don't know, want to skip, or cannot answer, always treat as an answer (skip/advance)
+  const skipOrDontKnowPatterns = /\b(don't know|dont know|do not know|no idea|skip|pass|cannot answer|can't answer|don't understand and want to skip|move on|next question)\b/i;
+  if (skipOrDontKnowPatterns.test(input)) {
+    return {
+      type: 'answer',
+      reply: null
+    };
+  }
+
   // Regex patterns for repeat
   const repeatPatterns = /repeat|pardon|say again|replay|could you repeat|didn't hear|missed the question/i;
   
@@ -1026,9 +1036,9 @@ Job Role: "${role}"
 Difficulty: "${difficulty}"
 
 Classify the candidate's input into one of three types:
-1. "answer": The candidate is attempting to answer the question, even if it is a short or partial answer.
+1. "answer": The candidate is attempting to answer the question, even if it is a short, partial, or incorrect answer, or if they state that they do not know the answer, want to skip/pass the question, or cannot answer it (e.g., "I don't know", "skip please", "I have no idea", "I cannot answer this"). These must be classified as "answer" so the interview can advance.
 2. "repeat": The candidate is asking to repeat the question or didn't hear/understand it (e.g., "can you repeat?", "what was the question?", "pardon?", "say again").
-3. "clarification": The candidate is asking for clarification about a term in the question, or making a polite/social/unrelated comment (e.g., "thank you", "hello", "interesting", "that's a tough one", "what do you mean by X?").
+3. "clarification": The candidate is asking for clarification about a term in the question, or making a polite/social/unrelated comment (e.g., "thank you", "hello", "interesting", "what do you mean by X?"). If they say "that's a tough one" or "difficult" but follow up with "I don't know" or a similar refusal to answer, classify it as "answer".
 
 If the classification is "repeat" or "clarification", generate a conversational "reply" that the interviewer (you) should say back to the candidate. This reply should address their query/remark politely and then restate or clarify the original question. Keep it natural, warm, and professional, and use a friendly Indian English conversational style where appropriate (but keep the language standard English). Do not use placeholders.
 
