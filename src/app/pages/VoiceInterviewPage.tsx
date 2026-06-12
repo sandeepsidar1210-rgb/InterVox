@@ -97,6 +97,9 @@ export default function VoiceInterviewPage() {
   useEffect(() => {
     if (isVoiceRecognitionListening || isRecording) {
       setCurrentTranscript(liveTranscript);
+      if (isRecording) {
+        startSilenceDetection();
+      }
     }
   }, [liveTranscript, isVoiceRecognitionListening, isRecording]);
 

@@ -9,7 +9,7 @@ interface UseWhisperRecognitionReturn {
   isRecording: boolean;
   error: string | null;
   startRecording: () => Promise<void>;
-  stopRecording: () => Promise<void>;
+  stopRecording: () => Promise<string>;
   resetTranscript: () => void;
 }
 
@@ -25,6 +25,7 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<any>(null);
   const browserTranscriptRef = useRef<string>('');
+  const resolveTranscriptRef = useRef<((value: string) => void) | null>(null);
 
   const startRecording = useCallback(async () => {
     try {
@@ -119,7 +120,7 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
     }
   }, []);
 
-  const stopRecording = useCallback(async () => {
+  const stopRecording = useCallback(async (): Promise<string> => {
     console.log('🛑 Stopping recording...');
     
     if (recognitionRef.current) {
@@ -130,10 +131,25 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
       }
     }
     
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
       setIsRecording(false);
+      return transcript;
     }
+
+    const promise = new Promise<string>((resolve) => {
+      resolveTranscriptRef.current = resolve;
+    });
+
+    try {
+      mediaRecorderRef.current.stop();
+    } catch (err) {
+      console.error('Error calling stop on MediaRecorder:', err);
+      resolveTranscriptRef.current = null;
+      setIsRecording(false);
+      return transcript;
+    }
+
+    setIsRecording(false);
     
     // Stop all tracks
     if (streamRef.current) {
@@ -143,13 +159,20 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
       });
       streamRef.current = null;
     }
-  }, []);
+
+    return promise;
+  }, [transcript]);
 
   const processAudio = async () => {
+    let resultText = '';
     try {
       if (audioChunksRef.current.length === 0) {
         console.warn('⚠️ No audio data to process');
         setError('No audio recorded');
+        if (resolveTranscriptRef.current) {
+          resolveTranscriptRef.current('');
+          resolveTranscriptRef.current = null;
+        }
         return;
       }
 
@@ -181,25 +204,32 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
       if (data.transcript && data.transcript.includes('[Mock transcription]')) {
         console.warn('⚠️ Received mock transcription from backend. Falling back to browser SpeechRecognition.');
         const finalBackup = browserTranscriptRef.current.trim();
-        setTranscript(finalBackup || "[No speech detected by browser speech recognition]");
+        resultText = finalBackup || "[No speech detected by browser speech recognition]";
       } else {
-        setTranscript(data.transcript);
+        resultText = data.transcript;
       }
+      setTranscript(resultText);
       setError(null);
       
     } catch (err: any) {
       console.error('❌ Error processing audio:', err);
       if (browserTranscriptRef.current.trim()) {
         console.warn('⚠️ Server transcription failed. Falling back to browser SpeechRecognition.');
-        setTranscript(browserTranscriptRef.current.trim());
+        resultText = browserTranscriptRef.current.trim();
+        setTranscript(resultText);
         setError(null);
       } else {
         setError(`Transcription error: ${err.message}`);
+        resultText = '';
       }
     } finally {
       // Clean up
       audioChunksRef.current = [];
       mediaRecorderRef.current = null;
+      if (resolveTranscriptRef.current) {
+        resolveTranscriptRef.current(resultText);
+        resolveTranscriptRef.current = null;
+      }
     }
   };
 

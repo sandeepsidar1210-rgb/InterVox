@@ -25,135 +25,143 @@ export function useSarvamTTS() {
     }
   }, []);
 
-  const speak = useCallback(async (
+  const speak = useCallback((
     text: string,
     options: SarvamTTSOptions = {}
   ) => {
-    if (!text) {
-      console.warn('⚠️ No text to speak');
-      return;
-    }
-
-    try {
-      console.log('🗣️ Sarvam TTS Request:', text.substring(0, 50) + '...');
-      setError(null);
-      
-      // Stop any currently playing audio
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-
-      // Initialize audio context if needed (for Chrome)
-      initAudioContext();
-      
-      // Resume audio context (Chrome autoplay policy)
-      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-        console.log('▶️ Audio Context resumed');
-      }
-
-      setIsSpeaking(true);
-
-      // Call backend TTS API
-      const params = new URLSearchParams({
-        text: text,
-        language: options.language || 'en-IN',
-        speaker: options.speaker || 'meera',
-      });
-
-      console.log('📡 Fetching audio from Sarvam AI...');
-      const response = await fetch(
-        `${BACKEND_URL}/api/interview/text-to-speech?${params}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`TTS API error: ${response.status}`);
-      }
-
-      // Get audio blob
-      const audioBlob = await response.blob();
-      console.log('✅ Audio received:', audioBlob.size, 'bytes');
-
-      if (audioBlob.size < 100) {
-        console.warn('⚠️ Received mock/empty audio from backend. Falling back to browser SpeechSynthesis.');
-        
-        window.speechSynthesis.cancel();
-        
-        const speakTextFallback = () => {
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = options.language || 'en-IN';
-          
-          const voices = window.speechSynthesis.getVoices();
-          const indVoice = voices.find(v => v.lang.toLowerCase().includes('in'));
-          if (indVoice) {
-            utterance.voice = indVoice;
-          }
-          
-          utterance.onstart = () => {
-            setIsSpeaking(true);
-          };
-          utterance.onend = () => {
-            setIsSpeaking(false);
-          };
-          utterance.onerror = (e) => {
-            console.error('SpeechSynthesis error:', e);
-            setIsSpeaking(false);
-          };
-          
-          window.speechSynthesis.speak(utterance);
-        };
-
-        if (window.speechSynthesis.getVoices().length === 0) {
-          window.speechSynthesis.onvoiceschanged = () => {
-            speakTextFallback();
-          };
-        } else {
-          speakTextFallback();
-        }
+    return new Promise<void>(async (resolve, reject) => {
+      if (!text) {
+        console.warn('⚠️ No text to speak');
+        resolve();
         return;
       }
 
-      // Create audio URL and play
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
+      try {
+        console.log('🗣️ Sarvam TTS Request:', text.substring(0, 50) + '...');
+        setError(null);
+        
+        // Stop any currently playing audio
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
 
-      audio.onplay = () => {
-        console.log('🔊 Sarvam TTS started playing!');
+        // Initialize audio context if needed (for Chrome)
+        initAudioContext();
+        
+        // Resume audio context (Chrome autoplay policy)
+        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+          console.log('▶️ Audio Context resumed');
+        }
+
         setIsSpeaking(true);
-      };
 
-      audio.onended = () => {
-        console.log('🔇 Sarvam TTS ended');
+        // Call backend TTS API
+        const params = new URLSearchParams({
+          text: text,
+          language: options.language || 'en-IN',
+          speaker: options.speaker || 'meera',
+        });
+
+        console.log('📡 Fetching audio from Sarvam AI...');
+        const response = await fetch(
+          `${BACKEND_URL}/api/interview/text-to-speech?${params}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`TTS API error: ${response.status}`);
+        }
+
+        // Get audio blob
+        const audioBlob = await response.blob();
+        console.log('✅ Audio received:', audioBlob.size, 'bytes');
+
+        if (audioBlob.size < 100) {
+          console.warn('⚠️ Received mock/empty audio from backend. Falling back to browser SpeechSynthesis.');
+          
+          window.speechSynthesis.cancel();
+          
+          const speakTextFallback = () => {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = options.language || 'en-IN';
+            
+            const voices = window.speechSynthesis.getVoices();
+            const indVoice = voices.find(v => v.lang.toLowerCase().includes('in'));
+            if (indVoice) {
+              utterance.voice = indVoice;
+            }
+            
+            utterance.onstart = () => {
+              setIsSpeaking(true);
+            };
+            utterance.onend = () => {
+              setIsSpeaking(false);
+              resolve();
+            };
+            utterance.onerror = (e) => {
+              console.error('SpeechSynthesis error:', e);
+              setIsSpeaking(false);
+              reject(e);
+            };
+            
+            window.speechSynthesis.speak(utterance);
+          };
+
+          if (window.speechSynthesis.getVoices().length === 0) {
+            window.speechSynthesis.onvoiceschanged = () => {
+              speakTextFallback();
+            };
+          } else {
+            speakTextFallback();
+          }
+          return;
+        }
+
+        // Create audio URL and play
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        audio.onplay = () => {
+          console.log('🔊 Sarvam TTS started playing!');
+          setIsSpeaking(true);
+        };
+
+        audio.onended = () => {
+          console.log('🔇 Sarvam TTS ended');
+          setIsSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+          audioRef.current = null;
+          resolve();
+        };
+
+        audio.onerror = (e) => {
+          console.error('❌ Audio playback error:', e);
+          setError('Audio playback failed');
+          setIsSpeaking(false);
+          URL.revokeObjectURL(audioUrl);
+          audioRef.current = null;
+          reject(new Error('Audio playback failed'));
+        };
+
+        // Play audio
+        await audio.play();
+        
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        console.error('❌ Sarvam TTS error:', errorMessage);
+        setError(errorMessage);
         setIsSpeaking(false);
-        URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
-      };
-
-      audio.onerror = (e) => {
-        console.error('❌ Audio playback error:', e);
-        setError('Audio playback failed');
-        setIsSpeaking(false);
-        URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
-      };
-
-      // Play audio
-      await audio.play();
-      
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      console.error('❌ Sarvam TTS error:', errorMessage);
-      setError(errorMessage);
-      setIsSpeaking(false);
-    }
+        resolve(); // Resolve on error so callers aren't stuck waiting forever
+      }
+    });
   }, [initAudioContext]);
 
   const stop = useCallback(() => {

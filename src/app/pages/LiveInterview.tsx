@@ -256,7 +256,7 @@ export default function LiveInterview() {
     const timer = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
-          handleNext();
+          handleSubmit();
           return 120;
         }
         return prev - 1;
@@ -361,12 +361,17 @@ export default function LiveInterview() {
   const handleSubmit = async () => {
     console.log('📤 Submitting answer...');
     
-    if (isRecording) {
-      stopRecording();
+    let userAnswer = '';
+    if (inputMode === 'voice') {
+      if (isRecording) {
+        setIsRecording(false);
+        userAnswer = await stopWhisperRecording();
+      } else {
+        userAnswer = transcript;
+      }
+    } else {
+      userAnswer = textAnswer;
     }
-    
-    // Get user's answer (from voice transcript or text input)
-    const userAnswer = inputMode === 'voice' ? transcript : textAnswer;
     
     if (!userAnswer || userAnswer.trim() === '' || !questions[currentQuestion]) {
       console.log('⚠️ No answer provided or question not loaded');

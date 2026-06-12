@@ -263,50 +263,54 @@ function generateSmartReactionAndQuestion(lastAnswer: string, lastQuestion: stri
     reactions.push("Good, thanks for that context.");
   }
 
-  // Generate cross-questions based on detected patterns
-  if (highestPattern === 'introduction') {
-    reactions.unshift("Hello! It's great to have you here today.");
+  // Only ask a follow-up question if they responded properly and the response is complete
+  const isProperAndComplete = answer.length >= 100 && 
+                              highestPattern !== 'introduction' && 
+                              highestPattern !== 'no_projects' &&
+                              !/\b(don't know|do not know|not sure|no idea|skip|pass|cannot answer)\b/i.test(answer);
+
+  if (isProperAndComplete) {
+    // Generate cross-questions based on detected patterns
+    if (highestPattern === 'metrics') {
+      reactions.unshift("That shows focus on measurable impact - I like that.");
+      // Ask about the baseline/measurement method
+      const numberMatch = answer.match(/(\d+%|\d+x)/);
+      if (numberMatch) {
+        crossQuestion = `When you mention that improvement, how did you measure it? What was your starting point or baseline?`;
+      } else {
+        crossQuestion = `What metrics did you use to measure that improvement? How do you typically track success?`;
+      }
+    } else if (highestPattern === 'leadership') {
+      reactions.unshift("That demonstrates strong ownership and leadership.");
+      // Ask about team dynamics or specific outcomes
+      if (/led|managed/.test(answer)) {
+        crossQuestion = `When you led that effort, what was the biggest challenge with the team or stakeholders, and how did you handle it?`;
+      } else if (/mentored|coached/.test(answer)) {
+        crossQuestion = `Tell me about someone you mentored. What was their growth, and how did you measure your impact as a mentor?`;
+      } else {
+        crossQuestion = `What was the most difficult decision you had to make while owning that responsibility?`;
+      }
+    } else if (highestPattern === 'challenge') {
+      reactions.unshift("I like how you handled that difficult situation.");
+      // Ask about lessons learned
+      if (/incident|outage|failure|critical/.test(answer)) {
+        crossQuestion = `Looking back at that incident, what would you do differently if it happened again? What did the team learn?`;
+      } else {
+        crossQuestion = `How did you approach solving that complex problem? What was your methodology?`;
+      }
+    } else if (highestPattern === 'technology') {
+      const techMatch = answer.match(/(kubernetes|docker|microservices|aws|gcp|azure|sql|nosql|mongodb|postgres|react|node|python|java|go|rust)/i);
+      if (techMatch) {
+        const tech = techMatch[1];
+        reactions.unshift(`Good knowledge of ${tech}!`);
+        crossQuestion = `Have you had to troubleshoot or debug issues with ${tech} in production? Walk me through one specific situation.`;
+      }
+    } else if (highestPattern === 'tradeoff') {
+      reactions.unshift("Excellent - you're thinking about trade-offs like a senior engineer.");
+      crossQuestion = `Given what you know now, would you make the same decision again? Are there any dimensions you'd reconsider?`;
+    }
+  } else {
     crossQuestion = null;
-  } else if (highestPattern === 'no_projects') {
-    reactions.unshift("I see. Starting out without formal projects is a common stage in any developer's path.");
-    crossQuestion = `If you were to design and build your first full-stack application today, what kind of application would you want to build and how would you plan your approach?`;
-  } else if (highestPattern === 'metrics') {
-    reactions.unshift("That shows focus on measurable impact - I like that.");
-    // Ask about the baseline/measurement method
-    const numberMatch = answer.match(/(\d+%|\d+x)/);
-    if (numberMatch) {
-      crossQuestion = `When you mention that improvement, how did you measure it? What was your starting point or baseline?`;
-    } else {
-      crossQuestion = `What metrics did you use to measure that improvement? How do you typically track success?`;
-    }
-  } else if (highestPattern === 'leadership') {
-    reactions.unshift("That demonstrates strong ownership and leadership.");
-    // Ask about team dynamics or specific outcomes
-    if (/led|managed/.test(answer)) {
-      crossQuestion = `When you led that effort, what was the biggest challenge with the team or stakeholders, and how did you handle it?`;
-    } else if (/mentored|coached/.test(answer)) {
-      crossQuestion = `Tell me about someone you mentored. What was their growth, and how did you measure your impact as a mentor?`;
-    } else {
-      crossQuestion = `What was the most difficult decision you had to make while owning that responsibility?`;
-    }
-  } else if (highestPattern === 'challenge') {
-    reactions.unshift("I like how you handled that difficult situation.");
-    // Ask about lessons learned
-    if (/incident|outage|failure|critical/.test(answer)) {
-      crossQuestion = `Looking back at that incident, what would you do differently if it happened again? What did the team learn?`;
-    } else {
-      crossQuestion = `How did you approach solving that complex problem? What was your methodology?`;
-    }
-  } else if (highestPattern === 'technology') {
-    const techMatch = answer.match(/(kubernetes|docker|microservices|aws|gcp|azure|sql|nosql|mongodb|postgres|react|node|python|java|go|rust)/i);
-    if (techMatch) {
-      const tech = techMatch[1];
-      reactions.unshift(`Good knowledge of ${tech}!`);
-      crossQuestion = `Have you had to troubleshoot or debug issues with ${tech} in production? Walk me through one specific situation.`;
-    }
-  } else if (highestPattern === 'tradeoff') {
-    reactions.unshift("Excellent - you're thinking about trade-offs like a senior engineer.");
-    crossQuestion = `Given what you know now, would you make the same decision again? Are there any dimensions you'd reconsider?`;
   }
 
   // Pick a reaction (prefer the more specific one if multiple were added)
@@ -505,8 +509,8 @@ Based on the candidate's last answer ("${lastQA.answer}"), follow these critical
    - If their answer was weak, brief, or missed key details, politely critique it or highlight the gaps (e.g., "Thanks for that brief overview. You mentioned using a cache, but didn't touch on cache invalidation...").
 
 2. DECIDE ON A FOLLOW-UP OR NEW QUESTION:
-   - If their last answer created a "situation", left a "hole", or contained interesting claims/technologies, ask a specific follow-up question (cross-question) digging deeper into that claim (e.g. asking how they handled a specific challenge they mentioned, or how they resolved the gap you highlighted).
-   - If their last answer was fully complete and resolved, transition smoothly and ask a new relevant question corresponding to the ${difficulty} difficulty and ${role} role.
+   - Ask a specific follow-up question (cross-question) digging deeper ONLY if the candidate's last answer was proper, detailed, and complete. For example, if they detailed a specific project, approach, or technical decision, follow up on the trade-offs, technologies, or edge cases of that specific response.
+   - If the candidate's last answer was NOT proper, was too brief, vague, or incomplete (e.g., they gave a very short response, said "I don't know" or "skip", or just introduced themselves), do NOT ask a follow-up question. Instead, transition smoothly to a standard new question corresponding to the ${difficulty} difficulty and ${role} role.
 
 3. WRITE A CONVERSATIONAL "reaction":
    - The "reaction" string must contain ONLY your natural verbal response to their last answer (e.g., your greeting, compliment, or constructive critique), transitioning smoothly to the next question.
