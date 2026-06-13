@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, useLocation } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { ProgressBar, ErrorBoundary } from "./components";
+import { ProgressBar, ErrorBoundary, ProtectedRoute } from "./components";
 import LandingPage from "./pages/LandingPage";
 import DashboardLayout from "./pages/DashboardLayout";
 import DashboardHome from "./pages/DashboardHome";
@@ -14,10 +14,11 @@ import InterviewResults from "./pages/InterviewResults";
 import AIPracticePage from "./pages/AIPracticePage";
 import CommunicationPracticePage from "./pages/CommunicationPracticePage";
 import BlogPage from "./pages/BlogPage";
-import SignInPage from "./pages/SignInPage";
+import AuthPage from "./pages/AuthPage";
 import LogoutPage from "./pages/LogoutPage";
 import { VoiceRecognitionTest } from "./components/VoiceRecognitionTest";
 import CompareSessionsPage from "./pages/CompareSessionsPage";
+import VoiceInterviewPage from "./pages/VoiceInterviewPage";
 
 const pageVariants = {
   initial: { opacity: 0, y: 16, filter: 'blur(6px)' },
@@ -48,13 +49,16 @@ function AppContent() {
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           <Route path="/" element={<PageWrapper><LandingPage /></PageWrapper>} />
-          <Route path="/ai-practice" element={<PageWrapper><AIPracticePage /></PageWrapper>} />
-          <Route path="/communication-practice" element={<PageWrapper><CommunicationPracticePage /></PageWrapper>} />
-          <Route path="/blog" element={<PageWrapper><BlogPage /></PageWrapper>} />
-          <Route path="/signin" element={<PageWrapper><SignInPage /></PageWrapper>} />
+          <Route path="/auth" element={<PageWrapper><AuthPage /></PageWrapper>} />
           <Route path="/logout" element={<PageWrapper><LogoutPage /></PageWrapper>} />
-          <Route path="/voice-test" element={<PageWrapper><VoiceRecognitionTest /></PageWrapper>} />
-          <Route path="/dashboard" element={<DashboardLayout />}>
+
+          {/* Protected Routes */}
+          <Route path="/ai-practice" element={<ProtectedRoute><PageWrapper><AIPracticePage /></PageWrapper></ProtectedRoute>} />
+          <Route path="/communication-practice" element={<ProtectedRoute><PageWrapper><CommunicationPracticePage /></PageWrapper></ProtectedRoute>} />
+          <Route path="/blog" element={<ProtectedRoute><PageWrapper><BlogPage /></PageWrapper></ProtectedRoute>} />
+          <Route path="/voice-test" element={<ProtectedRoute><PageWrapper><VoiceRecognitionTest /></PageWrapper></ProtectedRoute>} />
+          
+          <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
             <Route index element={<PageWrapper><DashboardHome /></PageWrapper>} />
             <Route path="practice" element={<PageWrapper><Practice /></PageWrapper>} />
             <Route path="analytics" element={<PageWrapper><Analytics /></PageWrapper>} />
@@ -62,9 +66,11 @@ function AppContent() {
             <Route path="profile" element={<PageWrapper><Profile /></PageWrapper>} />
             <Route path="settings" element={<PageWrapper><Settings /></PageWrapper>} />
           </Route>
-          <Route path="/interview-live" element={<PageWrapper><LiveInterview /></PageWrapper>} />
-          <Route path="/interview-results" element={<PageWrapper><InterviewResults /></PageWrapper>} />
-          <Route path="/compare" element={<PageWrapper><CompareSessionsPage /></PageWrapper>} />
+          
+          <Route path="/interview-live" element={<ProtectedRoute><PageWrapper><LiveInterview /></PageWrapper></ProtectedRoute>} />
+          <Route path="/interview" element={<ProtectedRoute><PageWrapper><VoiceInterviewPage /></PageWrapper></ProtectedRoute>} />
+          <Route path="/interview-results" element={<ProtectedRoute><PageWrapper><InterviewResults /></PageWrapper></ProtectedRoute>} />
+          <Route path="/compare" element={<ProtectedRoute><PageWrapper><CompareSessionsPage /></PageWrapper></ProtectedRoute>} />
         </Routes>
       </AnimatePresence>
     </>
@@ -73,6 +79,8 @@ function AppContent() {
 
 import { useEffect } from "react";
 import { initDB, migrateFromLocalStorage } from "../utils/db";
+import { supabase } from "../utils/supabase";
+import { ToastProvider } from "../hooks/useToast";
 
 export default function App() {
   useEffect(() => {
@@ -85,12 +93,41 @@ export default function App() {
       }
     };
     setupDB();
+
+    // Listen for auth events to upsert profile
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        const user = session.user;
+        try {
+          const { error } = await supabase.from('profiles').upsert({
+            id: user.id,
+            full_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'User',
+            avatar_url: user.user_metadata.avatar_url || '',
+            preferred_voice: 'meera',
+            preferred_domain: 'backend'
+          });
+          if (error) {
+            console.warn('Profile upsert returned error:', error.message);
+          } else {
+            console.log('Profile upsert succeeded for user:', user.id);
+          }
+        } catch (err) {
+          console.warn('Profiles upsert failed (offline/mock fallback):', err);
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   return (
     <BrowserRouter>
       <ErrorBoundary>
-        <AppContent />
+        <ToastProvider>
+          <AppContent />
+        </ToastProvider>
       </ErrorBoundary>
     </BrowserRouter>
   );

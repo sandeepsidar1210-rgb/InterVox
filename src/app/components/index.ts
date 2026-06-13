@@ -6,5 +6,6 @@ export { default as RadarChart } from "./results/RadarChart";
 export { default as TrendChart } from "./analytics/TrendChart";
 export { default as PageLoader } from "./ui/PageLoader";
 export { default as ErrorBoundary } from "./ui/ErrorBoundary";
+export { default as ProtectedRoute } from "./auth/ProtectedRoute";
 
 

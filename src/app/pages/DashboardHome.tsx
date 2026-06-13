@@ -20,6 +20,7 @@ import { useNavigate } from "react-router";
 import { getInterviewHistory, getHistoryStats, type InterviewSession } from "../../utils/interviewStorage";
 import { useCountUp } from "../../hooks/useCountUp";
 import { PageLoader } from "../components";
+import { supabase } from "../../utils/supabase";
 
 const quickRoles = [
   { label: "Software Engineer", icon: "💻", color: "#EFF6FF", text: "#2563EB" },
@@ -69,6 +70,7 @@ export default function DashboardHome() {
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({ totalSessions: 0, averageScore: 0, bestScore: 0, recentTrend: 0 });
   const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState("Alex");
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -76,71 +78,178 @@ export default function DashboardHome() {
   });
   const navigate = useNavigate();
 
-  // Load recent sessions from IndexedDB
+  const loadDashboardData = async () => {
+    try {
+      let history: InterviewSession[] = [];
+      let historyStats = { totalSessions: 0, averageScore: 0, bestScore: 0, recentTrend: 0 };
+      let userFullName = "Alex";
+
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      if (authSession?.user) {
+        // Fetch profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', authSession.user.id)
+          .single();
+        if (profile?.full_name) {
+          userFullName = profile.full_name;
+        } else {
+          userFullName = authSession.user.user_metadata.full_name || authSession.user.email?.split('@')[0] || "User";
+        }
+
+        // Fetch sessions
+        const { data: supabaseSessions, error: sessionsErr } = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('user_id', authSession.user.id)
+          .not('overall_score', 'is', null) // only completed sessions
+          .order('created_at', { ascending: false });
+
+        if (!sessionsErr && supabaseSessions) {
+          history = supabaseSessions.map((s: any) => ({
+            id: s.id,
+            date: new Date(s.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+            dateShort: new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            timestamp: new Date(s.created_at).getTime(),
+            role: s.domain || 'Software Engineer',
+            domain: s.domain || 'Backend',
+            level: s.difficulty?.toLowerCase() === 'easy' ? 'Entry Level' : s.difficulty?.toLowerCase() === 'hard' ? 'Senior Level' : 'Mid Level',
+            difficulty: s.difficulty || 'medium',
+            score: Math.round(s.overall_score || 0),
+            duration: `${s.duration_minutes || 15} min`,
+            questions: 5,
+            questionsAnswered: 5,
+            radar_scores: s.radar_scores,
+            communication_stats: s.communication_stats
+          }));
+
+          // Calculate stats
+          if (history.length > 0) {
+            const totalSessions = history.length;
+            const averageScore = Math.round(
+              history.reduce((sum, s) => sum + s.score, 0) / totalSessions
+            );
+            const bestScore = Math.max(...history.map(s => s.score));
+            
+            // Calculate trend
+            const recent = history.slice(0, 3);
+            const previous = history.slice(3, 6);
+            const recentAvg = recent.length > 0 
+              ? recent.reduce((sum, s) => sum + s.score, 0) / recent.length 
+              : 0;
+            const previousAvg = previous.length > 0 
+              ? previous.reduce((sum, s) => sum + s.score, 0) / previous.length 
+              : 0;
+            const recentTrend = recentAvg - previousAvg;
+
+            historyStats = {
+              totalSessions,
+              averageScore,
+              bestScore,
+              recentTrend
+            };
+          }
+        }
+      }
+
+      // Fallback to IndexedDB
+      if (history.length === 0) {
+        console.log("Fallback to IndexedDB for dashboard data");
+        history = await getInterviewHistory();
+        historyStats = await getHistoryStats();
+      }
+
+      setUserName(userFullName);
+      setStats(historyStats);
+
+      // Transform to match UI format
+      const formattedSessions = history.slice(0, 3).map((session: InterviewSession) => {
+        const sessionDate = new Date(session.timestamp);
+        const now = new Date();
+        const diffInMs = now.getTime() - sessionDate.getTime();
+        const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+        const diffInDays = Math.floor(diffInHours / 24);
+        
+        let dateDisplay = "";
+        if (diffInHours < 1) {
+          dateDisplay = "Just now";
+        } else if (diffInHours < 24) {
+          dateDisplay = `Today, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+        } else if (diffInDays === 1) {
+          dateDisplay = `Yesterday, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+        } else {
+          dateDisplay = sessionDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        }
+
+        // Determine tags based on difficulty and score
+        const tags = [];
+        if (session.difficulty === 'hard') {
+          tags.push('Technical');
+        } else if (session.difficulty === 'medium') {
+          tags.push('Technical', 'Behavioral');
+        } else {
+          tags.push('Behavioral');
+        }
+        
+        if (session.score >= 85) {
+          tags.push('Excellent');
+        }
+
+        return {
+          id: session.id,
+          role: session.role,
+          level: session.level,
+          score: session.score,
+          date: dateDisplay,
+          tags: tags.slice(0, 2),
+          color: roleColors[session.role] || roleColors.default,
+          fullData: session.fullData,
+        };
+      });
+      
+      setRecentSessions(formattedSessions);
+    } catch (err) {
+      console.error("Failed to load dashboard data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const loadRecentSessions = async () => {
-      setLoading(true);
-      try {
-        const history = await getInterviewHistory();
-        const historyStats = await getHistoryStats();
-        
-        setStats(historyStats);
-        
-        // Transform to match UI format
-        const formattedSessions = history.slice(0, 3).map((session: InterviewSession) => {
-          const sessionDate = new Date(session.timestamp);
-          const now = new Date();
-          const diffInMs = now.getTime() - sessionDate.getTime();
-          const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-          const diffInDays = Math.floor(diffInHours / 24);
-          
-          let dateDisplay = "";
-          if (diffInHours < 1) {
-            dateDisplay = "Just now";
-          } else if (diffInHours < 24) {
-            dateDisplay = `Today, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-          } else if (diffInDays === 1) {
-            dateDisplay = `Yesterday, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-          } else {
-            dateDisplay = sessionDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-          }
+    loadDashboardData();
 
-          // Determine tags based on difficulty and score
-          const tags = [];
-          if (session.difficulty === 'hard') {
-            tags.push('Technical');
-          } else if (session.difficulty === 'medium') {
-            tags.push('Technical', 'Behavioral');
-          } else {
-            tags.push('Behavioral');
-          }
-          
-          if (session.score >= 85) {
-            tags.push('Excellent');
-          }
+    // Setup realtime subscription
+    let channel: any;
+    const setupSubscription = async () => {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      if (!authSession?.user) return;
 
-          return {
-            id: session.id,
-            role: session.role,
-            level: session.level,
-            score: session.score,
-            date: dateDisplay,
-            tags: tags.slice(0, 2),
-            color: roleColors[session.role] || roleColors.default,
-            fullData: session.fullData,
-          };
-        });
-        
-        setRecentSessions(formattedSessions);
-        console.log(`📊 Loaded ${formattedSessions.length} recent sessions`);
-      } catch (err) {
-        console.error("Failed to load recent sessions:", err);
-      } finally {
-        setLoading(false);
+      channel = supabase
+        .channel('dashboard-sessions-completed')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'sessions',
+            filter: `user_id=eq.${authSession.user.id}`
+          },
+          (payload: any) => {
+            console.log('Realtime change received on dashboard:', payload);
+            loadDashboardData();
+          }
+        )
+        .subscribe();
+    };
+
+    setupSubscription();
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
       }
     };
-    
-    loadRecentSessions();  // Framer Motion variants
   }, []);
 
   const containerVariants = {
@@ -198,7 +307,7 @@ export default function DashboardHome() {
                 lineHeight: 1.3,
               }}
             >
-              Welcome back, Alex 👋
+              Welcome back, {userName} 👋
             </h1>
           </div>
 

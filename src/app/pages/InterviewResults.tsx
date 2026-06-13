@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "../../utils/supabase";
 import { useNavigate, useLocation } from "react-router";
 import {
   ChevronLeft,
@@ -27,7 +28,9 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import SaveInterviewModal from "../components/SaveInterviewModal";
-import { saveInterviewSession } from "../../utils/interviewStorage";
+import { PageLoader } from "../components";
+import { saveInterviewSession, getInterviewSession } from "../../utils/interviewStorage";
+import * as db from "../../utils/db";
 import * as Accordion from "@radix-ui/react-accordion";
 import { useCountUp } from "../../hooks/useCountUp";
 import RadarChart from "../components/results/RadarChart";
@@ -745,6 +748,189 @@ export default function InterviewResults() {
     communicationAnalytics = [],
   } = location.state || {};
   
+  const [dbResultData, setDbResultData] = useState<any | null>(null);
+  const [dbRadarScores, setDbRadarScores] = useState<any | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const queryParams = new URLSearchParams(location.search);
+  const sessionId = queryParams.get("id") || location.state?.sessionId;
+
+  useEffect(() => {
+    if (!sessionId || passedOverallScore !== undefined) return;
+
+    const loadSessionData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        console.log("Fetching session from Supabase:", sessionId);
+        const { data: session, error: sessionErr } = await supabase
+          .from("sessions")
+          .select("*")
+          .eq("id", sessionId)
+          .single();
+
+        if (sessionErr) throw sessionErr;
+
+        if (session) {
+          const { data: answers, error: answersErr } = await supabase
+            .from("answers")
+            .select("*")
+            .eq("session_id", sessionId)
+            .order("question_index", { ascending: true });
+
+          if (answersErr) throw answersErr;
+
+          console.log("Loaded session and answers from Supabase:", session, answers);
+          
+          // Helper to map answersData to evaluations
+          const mappedEvaluations = (answers || []).map(a => {
+            const improvements = a.score_data?.improvements 
+              || (a.score_data?.gap ? [a.score_data.gap] : []);
+            const strengths = a.score_data?.strengths 
+              || (a.score_data?.strength ? [a.score_data.strength] : []);
+            return {
+              final_score: a.score_data?.score !== undefined ? a.score_data.score * 10 : 0,
+              overall_feedback: a.score_data?.feedback || '',
+              strengths: strengths,
+              improvements: improvements,
+              score_breakdown: {
+                technical_accuracy: a.score_data?.technicalScore || 8,
+                clarity_score: a.score_data?.clarity || 8,
+                keyword_score: a.score_data?.relevance || 8,
+                depth_score: a.score_data?.depth || 8,
+                embedding_score: a.score_data?.relevance || 8,
+              }
+            };
+          });
+
+          const mappedQuestions = (answers || []).map((a: any, idx: number) => {
+            const scoreVal = a.score_data?.score !== undefined ? a.score_data.score * 10 : 0;
+            const improvements = a.score_data?.improvements 
+              || (a.score_data?.gap ? [a.score_data.gap] : []);
+            const strengths = a.score_data?.strengths 
+              || (a.score_data?.strength ? [a.score_data.strength] : []);
+
+            return {
+              id: idx + 1,
+              question: a.question_text || '',
+              yourAnswer: a.answer_transcript || 'No answer provided',
+              idealAnswer: a.score_data?.ideal_answer || 'A strong answer should explain the concepts clearly and provide relevant examples.',
+              score: scoreVal,
+              improvements: improvements,
+              strengths: strengths
+            };
+          });
+
+          const overallScoreVal = session.overall_score !== null ? Math.round(session.overall_score) : 0;
+
+          const mappedResult = {
+            overallScore: overallScoreVal,
+            date: new Date(session.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+            duration: `${session.duration_minutes || 15} min`,
+            role: session.domain || 'Software Engineer',
+            level: session.difficulty === 'easy' ? 'Entry Level' : session.difficulty === 'hard' ? 'Senior Level' : 'Mid Level',
+            summary: generateSummary(mappedEvaluations, overallScoreVal),
+            strengths: extractStrengths(mappedEvaluations),
+            weaknesses: extractWeaknesses(mappedEvaluations),
+            metrics: calculateMetrics(mappedEvaluations),
+            questions: mappedQuestions
+          };
+
+          setDbResultData(mappedResult);
+
+          const calculatedRadar = {
+            technicalAccuracy: session.radar_scores?.technicalAccuracy || 80,
+            communication: session.radar_scores?.communication || 80,
+            problemSolving: session.radar_scores?.problemSolving || 80,
+            confidence: session.radar_scores?.confidence || 80,
+            relevance: session.radar_scores?.relevance || 80,
+            structure: session.radar_scores?.structure || 80,
+          };
+          setDbRadarScores(calculatedRadar);
+          
+          // Cache to IndexedDB for offline access
+          try {
+            await db.saveSession({
+              id: sessionId,
+              date: mappedResult.date,
+              dateShort: new Date(session.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              timestamp: new Date(session.created_at).getTime(),
+              role: mappedResult.role,
+              level: mappedResult.level,
+              difficulty: session.difficulty || 'medium',
+              score: mappedResult.overallScore,
+              duration: mappedResult.duration,
+              questions: mappedResult.questions.length,
+              questionsAnswered: mappedResult.questions.filter(q => q.yourAnswer && q.yourAnswer !== 'No answer provided').length,
+              fullData: {
+                questions: mappedResult.questions.map(q => ({ question: q.question, ideal_answer: q.idealAnswer })),
+                answers: mappedResult.questions.map(q => q.yourAnswer),
+                evaluations: mappedEvaluations,
+                communicationAnalytics: session.communication_stats ? [session.communication_stats] : [],
+                interviewConfig: {
+                  role: mappedResult.role,
+                  difficulty: session.difficulty || 'medium',
+                }
+              }
+            });
+          } catch (dbErr) {
+            console.warn("Could not cache to IndexedDB:", dbErr);
+          }
+          return;
+        }
+      } catch (supabaseError: any) {
+        console.warn("Supabase fetch failed, falling back to IndexedDB:", supabaseError.message || supabaseError);
+        
+        try {
+          const localSession = await getInterviewSession(sessionId);
+          if (localSession) {
+            console.log("Loaded session from IndexedDB:", localSession);
+            const mapped = {
+              overallScore: localSession.score,
+              date: localSession.date,
+              duration: localSession.duration,
+              role: localSession.role,
+              level: localSession.level,
+              summary: localSession.fullData?.evaluations 
+                ? generateSummary(localSession.fullData.evaluations, localSession.score)
+                : "No summary available",
+              strengths: localSession.fullData?.evaluations ? extractStrengths(localSession.fullData.evaluations) : [],
+              weaknesses: localSession.fullData?.evaluations ? extractWeaknesses(localSession.fullData.evaluations) : [],
+              metrics: localSession.fullData?.evaluations 
+                ? calculateMetrics(localSession.fullData.evaluations)
+                : mockResultData.metrics,
+              questions: (localSession.fullData?.questions || []).map((q: any, idx: number) => ({
+                id: idx + 1,
+                question: q.question || '',
+                yourAnswer: localSession.fullData?.answers?.[idx] || 'No answer provided',
+                idealAnswer: q.ideal_answer || '',
+                score: localSession.fullData?.evaluations?.[idx]?.final_score || 0,
+                improvements: localSession.fullData?.evaluations?.[idx]?.improvements || [],
+                strengths: localSession.fullData?.evaluations?.[idx]?.strengths || [],
+              }))
+            };
+            setDbResultData(mapped);
+
+            const calculatedRadar = computeRadarScores(
+              localSession.fullData?.evaluations || [],
+              localSession.fullData?.communicationAnalytics || []
+            );
+            setDbRadarScores(calculatedRadar);
+            return;
+          }
+        } catch (localErr) {
+          console.error("IndexedDB fallback failed:", localErr);
+        }
+        setError("Failed to load interview results.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSessionData();
+  }, [sessionId]);
+
   // Show save modal on page load (only if we have real data and not already saved)
   useEffect(() => {
     if (passedOverallScore !== undefined && !isSaved) {
@@ -758,7 +944,7 @@ export default function InterviewResults() {
   }, [passedOverallScore, isSaved]);
   
   // Transform real evaluation data to match expected format
-  const resultData = passedOverallScore !== undefined ? {
+  const localResultData = passedOverallScore !== undefined ? {
     overallScore: passedOverallScore,
     date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     duration: `${Math.floor(realQuestions.length * 2)} min`,
@@ -779,7 +965,7 @@ export default function InterviewResults() {
     })),
   } : mockResultData;
 
-  const radarScores = passedOverallScore !== undefined
+  const localRadarScores = passedOverallScore !== undefined
     ? computeRadarScores(evaluations, communicationAnalytics)
     : {
         technicalAccuracy: 92,
@@ -789,6 +975,9 @@ export default function InterviewResults() {
         relevance: 90,
         structure: 86
       };
+
+  const resultData = dbResultData || localResultData;
+  const radarScores = dbRadarScores || localRadarScores;
 
   const handleCopyReport = async () => {
     const metricsText = resultData.metrics.map(m => `- ${m.label}: ${m.score}% (${m.feedback})`).join("\n");
@@ -880,15 +1069,18 @@ ${questionsText}
   // Save interview to history
   const handleSaveInterview = async () => {
     try {
+      const activeId = sessionId || `interview_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const questionsAnswered = userAnswers.filter((a: string) => a && a.trim()).length;
       
       // Calculate duration based on analytics or fallback
       const durationMinutes = Math.floor(realQuestions.length * 2);
       const duration = `${durationMinutes} min`;
       
-      await saveInterviewSession({
+      await db.saveSession({
+        id: activeId,
         date: resultData.date,
         dateShort: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        timestamp: Date.now(),
         role: resultData.role,
         level: resultData.level,
         difficulty: interviewConfig?.difficulty || 'medium',
@@ -920,6 +1112,10 @@ ${questionsText}
     setShowSaveModal(false);
     console.log('⏭️ Interview not saved');
   };
+
+  if (loading) {
+    return <PageLoader />;
+  }
 
   return (
     <>

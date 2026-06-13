@@ -326,3 +326,32 @@ export async function migrateFromLocalStorage(): Promise<void> {
     console.error('❌ Exception during local storage migration:', error);
   }
 }
+
+/**
+ * Clears all object stores in IndexedDB.
+ */
+export async function clearAllData(): Promise<void> {
+  try {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(['sessions', 'settings', 'analytics'], 'readwrite');
+      transaction.objectStore('sessions').clear();
+      transaction.objectStore('settings').clear();
+      transaction.objectStore('analytics').clear();
+      
+      transaction.oncomplete = () => {
+        console.log('🧹 IndexedDB cleared completely');
+        resolve();
+      };
+      
+      transaction.onerror = () => {
+        console.error('❌ Failed to clear IndexedDB:', transaction.error);
+        reject(transaction.error);
+      };
+    });
+  } catch (error) {
+    console.error('❌ Exception in clearAllData:', error);
+    throw error;
+  }
+}
+

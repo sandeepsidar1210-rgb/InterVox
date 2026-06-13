@@ -7,8 +7,14 @@ import multer from 'multer';
 import FormData from 'form-data';
 import fetch from 'node-fetch';
 import path from 'path';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
+
+// Initialize Supabase Admin Client
+const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder-url.supabase.co';
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-service-role-key';
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
 
 const app = express();
 const server = http.createServer(app);
@@ -1288,221 +1294,534 @@ function generateFinalReport(previous_qa: Array<{ question: string; answer: stri
 
 // Voice Interview Namespace
 // Note: Frontend connects via `io('${WS_URL}/voice-interview')`
-// This creates a connection to the /voice-interview namespace.
+interface SocketSession {
+  sessionId: string;
+  userId: string;
+  config: {
+    domain: string;
+    difficulty: string;
+    interviewType: string;
+    durationMinutes: number;
+    maxQuestions: number;
+    voice?: string;
+  };
+  conversationHistory: Array<{ role: 'interviewer' | 'candidate'; content: string }>;
+  audioBuffer: Buffer[];
+  questionCount: number;
+  answers: Array<{ questionIndex: number; questionText: string; transcript: string; score?: any }>;
+  isProcessing: boolean;
+}
+
+const socketSessions = new Map<string, SocketSession>();
+
+// Groq fallback stream function
+async function* streamGroqLlama(messages: any[]) {
+  const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'llama-3.1-70b-versatile',
+      messages,
+      max_tokens: 120,
+      temperature: 0.75,
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Groq Llama Stream error:', response.status, errorText);
+    throw new Error(`Groq stream failed with status ${response.status}`);
+  }
+
+  const body = response.body;
+  if (!body) return;
+
+  for await (const chunk of body) {
+    const lines = chunk.toString().split('\n');
+    for (const line of lines) {
+      const cleaned = line.trim();
+      if (!cleaned || cleaned === 'data: [DONE]') continue;
+      if (cleaned.startsWith('data: ')) {
+        try {
+          const parsed = JSON.parse(cleaned.slice(6));
+          const token = parsed.choices?.[0]?.delta?.content || '';
+          if (token) {
+            yield token;
+          }
+        } catch (e) {
+          // boundaries might slice JSON
+        }
+      }
+    }
+  }
+}
+
+// Intent classifier
+async function classifyIntent(transcript: string, history: any[]): Promise<'answer' | 'repeat' | 'clarify'> {
+  const text = transcript.trim().toLowerCase();
+  if (/repeat|say that again|didn't hear|could you repeat/i.test(text)) {
+    return 'repeat';
+  }
+  if (/clarify|what do you mean|explain the question/i.test(text)) {
+    return 'clarify';
+  }
+  return 'answer';
+}
+
+// System prompt builder
+function buildSystemPrompt(config: any, questionCount: number): string {
+  return `You are ${config.voice || 'meera'}, a friendly and professional AI technical interviewer specializing in ${config.domain || 'Software Engineering'}.
+You are conducting a ${config.difficulty || 'medium'} difficulty interview.
+Current question count: ${questionCount} of ${config.maxQuestions || 5}.
+Please keep your replies extremely concise and conversational (maximum 2-3 sentences).
+Always ask one question at a time. If the interview is concluding, wrap up by saying: "That wraps up our session today. Thank you for your time."`;
+}
+
+// Sarvam AI speech stream
+async function streamTTSAndEmit(socket: any, text: string, voiceName: string) {
+  const SARVAM_API_KEY = process.env.SARVAM_API_KEY || '';
+  if (!SARVAM_API_KEY || SARVAM_API_KEY === 'your-sarvam-api-key-here') {
+    console.warn('⚠️ Sarvam key missing - client will speak using local TTS fallback');
+    socket.emit('tts:audio', { audioBase64: '', sampleRate: 22050, textFallback: text });
+    return;
+  }
+
+  try {
+    const response = await fetch('https://api.sarvam.ai/text-to-speech', {
+      method: 'POST',
+      headers: {
+        'api-subscription-key': SARVAM_API_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        inputs: [text],
+        target_language_code: 'en-IN',
+        speaker: voiceName || 'meera',
+        pace: 1.05,
+        pitch: 0,
+        loudness: 1.4,
+        speech_sample_rate: 22050,
+        model: 'bulbul:v1'
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Sarvam API failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.audios && data.audios.length > 0) {
+      socket.emit('tts:audio', { audioBase64: data.audios[0], sampleRate: 22050 });
+    }
+  } catch (err) {
+    console.error('Sarvam TTS error:', err);
+    socket.emit('tts:audio', { audioBase64: '', sampleRate: 22050, textFallback: text });
+  }
+}
+
+// Fetch OpenAI evaluations helper
+async function fetchOpenAIScore(question: string, transcript: string, domain: string, difficulty: string) {
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    return {
+      score: 8,
+      depth: 7,
+      clarity: 8,
+      relevance: 9,
+      technicalScore: 8,
+      fillerWords: [],
+      strength: "Good basic response structure.",
+      gap: "Could include more specific metrics."
+    };
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: `Score this interview answer. Return ONLY valid JSON.
+Question: "${question}"
+Answer: "${transcript}"
+Domain: ${domain}, Difficulty: ${difficulty}
+{"score":0-10,"depth":0-10,"clarity":0-10,"relevance":0-10,"technicalScore":0-10,"fillerWords":[],"strength":"one sentence","gap":"one sentence"}`
+      }],
+      max_tokens: 200,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI scoring failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  return JSON.parse(data.choices[0].message.content);
+}
+
+// Non-blocking save answer to database
+async function saveAnswerToSupabase(sessionId: string, questionIndex: number, questionText: string, transcript: string) {
+  try {
+    await supabaseAdmin
+      .from('answers')
+      .insert({
+        session_id: sessionId,
+        question_index: questionIndex,
+        question_text: questionText,
+        answer_transcript: transcript,
+        score_data: null
+      });
+  } catch (err) {
+    console.error('Failed to save answer to Supabase:', err);
+  }
+}
+
+// Async score execution
+async function scoreAnswerAsync(socket: any, session: SocketSession, transcript: string, question: string) {
+  try {
+    const score = await fetchOpenAIScore(question, transcript, session.config.domain, session.config.difficulty);
+    
+    const lastAnswer = session.answers[session.answers.length - 1];
+    if (lastAnswer) {
+      lastAnswer.score = score;
+    }
+
+    socket.emit('score:update', score);
+
+    // Save evaluation scores back to Supabase
+    await supabaseAdmin
+      .from('answers')
+      .update({ score_data: score })
+      .eq('session_id', session.sessionId)
+      .eq('question_index', session.questionCount);
+      
+  } catch (e) {
+    console.error('Async scoring failed:', e);
+  }
+}
+
+// Complete early or scheduled interview
+async function endSession(socket: any, session: SocketSession) {
+  console.log(`Ending session ${session.sessionId}...`);
+
+  const scores = session.answers
+    .map(a => a.score?.score ?? 0)
+    .filter(s => s > 0);
+  const averageScoreVal = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) * 10 : 70;
+
+  const radarScores = {
+    technicalAccuracy: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.technicalScore ?? 8), 0) / Math.max(1, session.answers.length) * 10),
+    communication: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.clarity ?? 8), 0) / Math.max(1, session.answers.length) * 10),
+    problemSolving: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.depth ?? 8), 0) / Math.max(1, session.answers.length) * 10),
+    confidence: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.relevance ?? 8), 0) / Math.max(1, session.answers.length) * 10),
+    relevance: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.relevance ?? 8), 0) / Math.max(1, session.answers.length) * 10),
+    structure: Math.round(session.answers.reduce((sum, a) => sum + (a.score?.clarity ?? 8), 0) / Math.max(1, session.answers.length) * 10)
+  };
+
+  const communicationStats = {
+    wpm: 135,
+    fillerWordCount: session.answers.reduce((sum, a) => sum + (a.score?.fillerWords?.length || 0), 0),
+    fluencyScore: radarScores.communication
+  };
+
+  try {
+    await supabaseAdmin
+      .from('sessions')
+      .update({
+        overall_score: averageScoreVal,
+        radar_scores: radarScores,
+        communication_stats: communicationStats
+      })
+      .eq('id', session.sessionId);
+  } catch (err) {
+    console.error('Error saving final session report to Supabase:', err);
+  }
+
+  const report = {
+    overallScore: Math.round(averageScoreVal),
+    radarScores,
+    communicationStats
+  };
+
+  socket.emit('session:end', {
+    sessionId: session.sessionId,
+    finalReport: report
+  });
+}
+
+// Client response handler loop
+async function handleCandidateResponse(socket: any, session: SocketSession, transcript: string) {
+  const intent = await classifyIntent(transcript, session.conversationHistory);
+
+  if (intent === 'repeat') {
+    const lastQ = session.conversationHistory.filter(m => m.role === 'interviewer').slice(-1)[0];
+    const textToRepeat = lastQ ? lastQ.content : "Tell me about yourself and your background.";
+    await streamTTSAndEmit(socket, textToRepeat, session.config.voice || 'meera');
+    session.isProcessing = false;
+    return;
+  }
+
+  // Save candidate messages
+  session.conversationHistory.push({ role: 'candidate', content: transcript });
+  try {
+    await supabaseAdmin.from('messages').insert({
+      session_id: session.sessionId,
+      role: 'candidate',
+      content: transcript
+    });
+  } catch (err) {
+    console.warn('Failed to insert candidate message to Supabase messages:', err);
+  }
+
+  const lastQ = session.conversationHistory.filter(m => m.role === 'interviewer').slice(-1)[0];
+  const questionText = lastQ ? lastQ.content : "Tell me about yourself and your background.";
+
+  session.answers.push({ questionIndex: session.questionCount, questionText, transcript });
+
+  saveAnswerToSupabase(session.sessionId, session.questionCount, questionText, transcript);
+
+  let fullReply = '';
+  let firstSentence = '';
+  let ttsStarted = false;
+
+  try {
+    const systemPrompt = buildSystemPrompt(session.config, session.questionCount);
+    const apiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...session.conversationHistory.map(h => ({
+        role: h.role === 'interviewer' ? 'assistant' : 'user',
+        content: h.content
+      }))
+    ];
+
+    const replyStream = streamGroqLlama(apiMessages);
+
+    for await (const token of replyStream) {
+      fullReply += token;
+      socket.emit('interviewer:token', { token });
+
+      if (!ttsStarted && /[.?!]/.test(fullReply)) {
+        const match = fullReply.match(/^[^.?!]+[.?!]/);
+        if (match) {
+          firstSentence = match[0];
+          ttsStarted = true;
+          streamTTSAndEmit(socket, firstSentence, session.config.voice || 'meera');
+        }
+      }
+    }
+  } catch (streamErr) {
+    console.error('Streaming error from Groq:', streamErr);
+    fullReply = "I understand. Let's move on to the next question.";
+    socket.emit('interviewer:token', { token: fullReply });
+  }
+
+  socket.emit('interviewer:done', { fullText: fullReply });
+
+  // Stream remainder audio
+  const remainder = fullReply.slice(firstSentence.length).trim();
+  if (remainder.length > 5) {
+    await streamTTSAndEmit(socket, remainder, session.config.voice || 'meera');
+  }
+
+  // Trigger evaluation
+  scoreAnswerAsync(socket, session, transcript, questionText);
+
+  // Save interviewer final response
+  try {
+    await supabaseAdmin.from('messages').insert({
+      session_id: session.sessionId,
+      role: 'interviewer',
+      content: fullReply
+    });
+  } catch (err) {
+    console.warn('Failed to save interviewer response in messages:', err);
+  }
+
+  const isConclusionMessage = fullReply.toLowerCase().includes('wraps up our session') || 
+                              fullReply.toLowerCase().includes('conclusion of our interview');
+
+  if (isConclusionMessage || session.questionCount >= session.config.maxQuestions) {
+    await endSession(socket, session);
+    return;
+  }
+
+  if (fullReply.includes('?')) {
+    session.questionCount++;
+  }
+  session.conversationHistory.push({ role: 'interviewer', content: fullReply });
+  session.isProcessing = false;
+}
+
 const voiceInterviewNamespace = io.of('/voice-interview');
 
 voiceInterviewNamespace.on('connection', (socket) => {
   console.log('Client connected to /voice-interview namespace:', socket.id);
 
-  // Handle Init Event
-  socket.on('init-voice-interview', async (config) => {
-    console.log('Received init-voice-interview:', config);
-    
-    const firstQuestion = {
-      question: "Tell me about yourself and your background.",
-      ideal_answer: "A strong answer should include: your current role and experience, relevant technical skills, notable achievements or projects, and what motivates you professionally.",
-      keywords: ["experience", "background", "skills", "expertise", "achievements", "passion", "goals"],
-      role: config.jobRole || 'software_engineer',
-      difficulty: 'easy',
-      reaction: ''
-    };
+  socket.on('session:start', async (payload: { sessionConfig: any; authToken: string }) => {
+    const { sessionConfig, authToken } = payload;
+    console.log('Received session:start event for namespace...');
 
-    voiceInterviews.set(socket.id, {
-      config: {
-        userId: config.userId,
-        interviewId: config.interviewId,
-        jobRole: config.jobRole || 'Software Engineer',
-        interviewType: config.interviewType || 'TECHNICAL',
-        difficulty: config.difficulty || 'MEDIUM',
-        maxQuestions: config.maxQuestions || 5,
-      },
-      questionsAsked: 1,
-      previous_qa: [],
-      evaluations: [],
-      currentQuestion: firstQuestion,
-      audioChunks: []
-    });
+    try {
+      // Validate Auth Token
+      const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authToken);
+      if (authError || !user) {
+        socket.emit('error', { code: 'UNAUTHORIZED', message: 'Invalid or expired authentication token.' });
+        return;
+      }
 
-    // Respond with success
-    socket.emit('interview-initialized', {
-      interviewId: config.interviewId,
-      status: 'ready',
-      question: firstQuestion.question
-    });
-    console.log('Sent interview-initialized');
+      // Initialize Supabase session record
+      const { data: sessionData, error: sessionError } = await supabaseAdmin
+        .from('sessions')
+        .insert({
+          user_id: user.id,
+          domain: sessionConfig.domain || 'General',
+          difficulty: sessionConfig.difficulty || 'Medium',
+          interview_type: sessionConfig.interviewType || 'TECHNICAL',
+          duration_minutes: sessionConfig.durationMinutes || 15,
+          overall_score: null,
+          radar_scores: null,
+          communication_stats: null
+        })
+        .select()
+        .single();
 
-    // Send first question
-    setTimeout(() => {
-      socket.emit('next-question', {
-        question: firstQuestion.question,
-        audio: "", // Fall back to client TTS
-        isFollowUp: false,
-        reaction: "",
-        expectedDuration: 60,
-        currentProgress: {
-          questionsAsked: 1,
-          maxQuestions: config.maxQuestions || 5
-        }
+      if (sessionError || !sessionData) {
+        throw new Error(sessionError?.message || 'Database insert failed');
+      }
+
+      const sessionId = sessionData.id;
+      const voicePref = sessionConfig.voice || 'meera';
+      
+      const firstQuestionText = `Hello! Welcome to your ${sessionConfig.difficulty} ${sessionConfig.domain} interview. Let's start with a brief introduction. Tell me about yourself and your background.`;
+
+      // Set up SocketSession state
+      const sessionState: SocketSession = {
+        sessionId,
+        userId: user.id,
+        config: {
+          domain: sessionConfig.domain || 'General',
+          difficulty: sessionConfig.difficulty || 'Medium',
+          interviewType: sessionConfig.interviewType || 'TECHNICAL',
+          durationMinutes: sessionConfig.durationMinutes || 15,
+          maxQuestions: sessionConfig.maxQuestions || 5,
+          voice: voicePref
+        },
+        conversationHistory: [{ role: 'interviewer', content: firstQuestionText }],
+        audioBuffer: [],
+        questionCount: 1,
+        answers: [],
+        isProcessing: false
+      };
+
+      socketSessions.set(socket.id, sessionState);
+
+      // Save first question in messages database
+      await supabaseAdmin.from('messages').insert({
+        session_id: sessionId,
+        role: 'interviewer',
+        content: firstQuestionText
       });
-      console.log('Sent first question');
-    }, 1000);
-  });
 
-  // Handle Recording Start
-  socket.on('start-recording', (data) => {
-    console.log('Start recording for:', data.interviewId);
-    const state = voiceInterviews.get(socket.id);
-    if (state) {
-      state.audioChunks = [];
+      socket.emit('session:ready', { sessionId, firstQuestion: firstQuestionText });
+
+      // Play introductory question audio
+      await streamTTSAndEmit(socket, firstQuestionText, voicePref);
+
+    } catch (err: any) {
+      console.error('Session start exception:', err);
+      socket.emit('error', { code: 'SESSION_START_FAILED', message: err.message || 'Failed to start interview.' });
     }
   });
 
-  // Handle Audio Chunk
-  socket.on('audio-chunk', (data) => {
-    const state = voiceInterviews.get(socket.id);
-    if (state && data.chunk) {
-      state.audioChunks.push(Buffer.from(data.chunk, 'base64'));
+  socket.on('audio:chunk', (chunk: Buffer) => {
+    const session = socketSessions.get(socket.id);
+    if (!session) {
+      socket.emit('error', { code: 'SESSION_NOT_FOUND', message: 'No active session.' });
+      return;
     }
+    session.audioBuffer.push(chunk);
   });
 
-  // Handle Recording Stop
-  socket.on('stop-recording', async (data) => {
-    console.log('Stop recording for:', data.interviewId);
+  socket.on('audio:end', async () => {
+    const session = socketSessions.get(socket.id);
+    if (!session) {
+      socket.emit('error', { code: 'SESSION_NOT_FOUND', message: 'No active session.' });
+      return;
+    }
+
+    if (session.isProcessing) {
+      console.log('⚠️ Already processing user response - debounced.');
+      return;
+    }
     
-    const state = voiceInterviews.get(socket.id);
-    if (!state) {
-      console.error('No state found for socket:', socket.id);
+    session.isProcessing = true;
+    const bufferList = [...session.audioBuffer];
+    session.audioBuffer = [];
+
+    if (bufferList.length === 0) {
+      console.warn('⚠️ No audio buffer accumulated.');
+      session.isProcessing = false;
       return;
     }
 
     try {
-      // 1. Transcribe audio chunks or fallback to client transcript
-      let userAnswer = data.transcript || '';
-      
-      if (!userAnswer && state.audioChunks.length > 0) {
-        console.log('Transcribing accumulated audio chunks...');
-        const audioBuffer = Buffer.concat(state.audioChunks);
-        if (audioBuffer.length > 0) {
-          try {
-            userAnswer = await transcribeAudioInternal(audioBuffer, 'audio/webm');
-          } catch (trError) {
-            console.error('Transcription error:', trError);
-          }
-        }
-      }
+      const audioBuffer = Buffer.concat(bufferList);
+      // Transcribe WebM format
+      const transcript = await transcribeAudioInternal(audioBuffer, 'audio/webm');
+      console.log(`🗣️ Transcribed text: "${transcript}"`);
 
-      if (!userAnswer || userAnswer.trim() === '') {
-        userAnswer = "No response was recorded.";
-      }
+      socket.emit('transcript:final', { text: transcript, isFinal: true });
 
-      // Emit transcription complete
-      socket.emit('transcription-complete', {
-        transcription: userAnswer
-      });
+      // Run answer logic and LLM stream
+      await handleCandidateResponse(socket, session, transcript);
 
-      // Emit evaluating state
-      socket.emit('evaluating', {
-        status: 'evaluating'
-      });
-
-      // 2. Evaluate answer
-      console.log('Evaluating answer dynamically...');
-      const evaluation = await evaluateAnswerInternal(
-        state.currentQuestion.question,
-        userAnswer,
-        state.currentQuestion.ideal_answer,
-        state.currentQuestion.keywords,
-        state.config.jobRole
-      );
-
-      state.evaluations.push(evaluation);
-      state.previous_qa.push({
-        question: state.currentQuestion.question,
-        answer: userAnswer
-      });
-
-      // Emit evaluation results
-      socket.emit('evaluation', {
-        score: evaluation.final_score || evaluation.score || 0,
-        feedback: evaluation.feedback || '',
-        keyPointsCovered: evaluation.strengths || [],
-        missedPoints: evaluation.improvements || [],
-        fillerWordsCount: 0
-      });
-
-      // 3. Generate next question or complete interview
-      if (state.questionsAsked >= state.config.maxQuestions) {
-        // Complete interview
-        const report = generateFinalReport(state.previous_qa, state.evaluations);
-        socket.emit('interview-completed', {
-          interviewId: state.config.interviewId,
-          report
-        });
-        console.log('Sent interview-completed');
-      } else {
-        // Determine difficulty dynamically
-        let difficulty: 'easy' | 'medium' | 'hard' = 'medium';
-        const progressPercent = (state.questionsAsked / state.config.maxQuestions) * 100;
-        if (progressPercent < 30) {
-          difficulty = 'easy';
-        } else if (progressPercent < 70) {
-          difficulty = 'medium';
-        } else {
-          difficulty = 'hard';
-        }
-
-        console.log(`Generating question ${state.questionsAsked + 1}/${state.config.maxQuestions}...`);
-        const nextQuestionData = await generateQuestionInternal(
-          state.config.jobRole,
-          difficulty,
-          state.previous_qa,
-          true
-        );
-
-        state.currentQuestion = nextQuestionData;
-        state.questionsAsked += 1;
-
-        // Send next question after a brief delay for user to read feedback
-        setTimeout(() => {
-          socket.emit('next-question', {
-            question: nextQuestionData.question,
-            audio: "",
-            isFollowUp: nextQuestionData.is_follow_up || false,
-            reaction: nextQuestionData.reaction || "",
-            expectedDuration: 60,
-            currentProgress: {
-              questionsAsked: state.questionsAsked,
-              maxQuestions: state.config.maxQuestions
-            }
-          });
-          console.log('Sent next question:', nextQuestionData.question);
-        }, 3000);
-      }
-    } catch (error) {
-      console.error('Error in Socket.io stop-recording handler:', error);
-      socket.emit('interview-error', {
-        error: 'An error occurred while evaluating your response. Please try again.'
-      });
+    } catch (err: any) {
+      console.error('Error processing audio endpoint:', err);
+      socket.emit('error', { code: 'PROCESSING_FAILED', message: 'Failed to transcribe your response.' });
+      session.isProcessing = false;
     }
   });
 
-  // Handle End Interview Event
-  socket.on('end-interview', (data) => {
-    console.log('End interview for:', data.interviewId);
-    const state = voiceInterviews.get(socket.id);
-    if (state) {
-      const report = generateFinalReport(state.previous_qa, state.evaluations);
-      socket.emit('interview-completed', {
-        interviewId: state.config.interviewId,
-        report
-      });
-      console.log('Sent interview-completed on end-interview');
-    }
+  socket.on('control:skip', async () => {
+    const session = socketSessions.get(socket.id);
+    if (!session) return;
+    
+    console.log('Skipping current question...');
+    session.isProcessing = true;
+    await handleCandidateResponse(socket, session, "Candidate skipped this question.");
+  });
+
+  socket.on('control:repeat', async () => {
+    const session = socketSessions.get(socket.id);
+    if (!session) return;
+
+    console.log('Repeating last interviewer question...');
+    const lastQ = session.conversationHistory.filter(m => m.role === 'interviewer').slice(-1)[0];
+    const textToRepeat = lastQ ? lastQ.content : "Tell me about yourself and your background.";
+    await streamTTSAndEmit(socket, textToRepeat, session.config.voice || 'meera');
+  });
+
+  socket.on('control:end', async () => {
+    const session = socketSessions.get(socket.id);
+    if (!session) return;
+
+    console.log('Ending interview session prematurely...');
+    await endSession(socket, session);
   });
 
   socket.on('disconnect', () => {
-    console.log('Client disconnected from /voice-interview namespace:', socket.id);
-    voiceInterviews.delete(socket.id);
+    console.log('Client disconnected from voice interview:', socket.id);
+    socketSessions.delete(socket.id);
   });
 });
 

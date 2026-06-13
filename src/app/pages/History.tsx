@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { getInterviewHistory, getHistoryStats, type InterviewSession } from "../../utils/interviewStorage";
 import { PageLoader } from "../components";
+import { supabase } from "../../utils/supabase";
 
 const domainIcons: Record<string, any> = {
   'Backend': Server,
@@ -119,12 +120,79 @@ export default function History() {
     const loadHistory = async () => {
       setLoading(true);
       try {
-        const history = await getInterviewHistory();
-        const historyStats = await getHistoryStats();
+        let history: InterviewSession[] = [];
+        let historyStats = { totalSessions: 0, averageScore: 0, bestScore: 0, recentTrend: 0 };
+
+        // Try Supabase first
+        const { data: { session: userSession } } = await supabase.auth.getSession();
+        if (userSession?.user) {
+          console.log("Fetching history from Supabase...");
+          const { data: supabaseSessions, error: sessionsErr } = await supabase
+            .from('sessions')
+            .select('*')
+            .eq('user_id', userSession.user.id)
+            .not('overall_score', 'is', null) // only show completed sessions
+            .order('created_at', { ascending: false });
+
+          if (!sessionsErr && supabaseSessions) {
+            history = supabaseSessions.map((s: any) => ({
+              id: s.id,
+              date: new Date(s.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+              dateShort: new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              timestamp: new Date(s.created_at).getTime(),
+              role: s.domain || 'Software Engineer',
+              domain: s.domain || 'Backend',
+              level: s.difficulty?.toLowerCase() === 'easy' ? 'Entry Level' : s.difficulty?.toLowerCase() === 'hard' ? 'Senior Level' : 'Mid Level',
+              difficulty: s.difficulty || 'medium',
+              score: Math.round(s.overall_score || 0),
+              duration: `${s.duration_minutes || 15} min`,
+              questions: 5,
+              questionsAnswered: 5,
+              radar_scores: s.radar_scores,
+              communication_stats: s.communication_stats
+            }));
+
+            // Calculate stats
+            if (history.length > 0) {
+              const totalSessions = history.length;
+              const averageScore = Math.round(
+                history.reduce((sum, s) => sum + s.score, 0) / totalSessions
+              );
+              const bestScore = Math.max(...history.map(s => s.score));
+              
+              // Calculate trend
+              const recent = history.slice(0, 3);
+              const previous = history.slice(3, 6);
+              const recentAvg = recent.length > 0 
+                ? recent.reduce((sum, s) => sum + s.score, 0) / recent.length 
+                : 0;
+              const previousAvg = previous.length > 0 
+                ? previous.reduce((sum, s) => sum + s.score, 0) / previous.length 
+                : 0;
+              const recentTrend = recentAvg - previousAvg;
+
+              historyStats = {
+                totalSessions,
+                averageScore,
+                bestScore,
+                recentTrend
+              };
+            }
+          } else if (sessionsErr) {
+            console.warn("Supabase history query returned error:", sessionsErr.message);
+          }
+        }
+
+        // Fallback to IndexedDB
+        if (history.length === 0) {
+          console.log("No history loaded from Supabase or user offline. Falling back to IndexedDB.");
+          history = await getInterviewHistory();
+          historyStats = await getHistoryStats();
+        }
         
         setSessions(history);
         setStats(historyStats);
-        console.log(`📚 Loaded ${history.length} interviews from history`);
+        console.log(`📚 Loaded ${history.length} interviews`);
       } catch (err) {
         console.error("Failed to load history:", err);
       } finally {
@@ -160,20 +228,11 @@ export default function History() {
   });
 
   const handleViewReport = (session: InterviewSession) => {
-    if (session.fullData) {
-      navigate('/interview-results', {
-        state: {
-          questions: session.fullData.questions,
-          answers: session.fullData.answers,
-          evaluations: session.fullData.evaluations,
-          overallScore: session.score,
-          interviewConfig: session.fullData.interviewConfig,
-          communicationAnalytics: session.fullData.communicationAnalytics,
-        }
-      });
-    } else {
-      alert('Interview data not available');
-    }
+    navigate(`/interview-results?id=${session.id}`, {
+      state: {
+        sessionId: session.id
+      }
+    });
   };
 
   return (
@@ -459,7 +518,7 @@ export default function History() {
               const domain = session.domain || "Backend";
               const Icon = domainIcons[domain] || Server;
               const badgeColor = domainColors[domain] || domainColors.Backend;
-              const radarScores = computeRadarScores(
+              const radarScores = session.radar_scores || computeRadarScores(
                 session.fullData?.evaluations || [],
                 session.fullData?.communicationAnalytics || []
               );
