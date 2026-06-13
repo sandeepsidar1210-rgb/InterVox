@@ -130,8 +130,24 @@ export default function LiveInterview() {
     stateRef.current = state;
   }, [state]);
 
-  // Selected Voice preference from localStorage
-  const selectedVoice = localStorage.getItem("intervox_voice_preference") || "kavya";
+  // Selected Voice preference from IndexedDB
+  const [selectedVoice, setSelectedVoice] = useState("kavya");
+  
+  useEffect(() => {
+    const loadVoicePreference = async () => {
+      try {
+        const { getSetting } = await import("../../utils/db");
+        const voice = await getSetting("intervox_voice_preference");
+        if (voice) {
+          setSelectedVoice(voice);
+        }
+      } catch (err) {
+        console.error("Failed to load voice preference:", err);
+      }
+    };
+    loadVoicePreference();
+  }, []);
+
   const voiceNameMap: Record<string, string> = {
     kavya: "Meera (AI Professional)",
     amit: "Amit (AI Technical Coach)",

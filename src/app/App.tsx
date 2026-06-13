@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, useLocation } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { ProgressBar } from "./components";
+import { ProgressBar, ErrorBoundary } from "./components";
 import LandingPage from "./pages/LandingPage";
 import DashboardLayout from "./pages/DashboardLayout";
 import DashboardHome from "./pages/DashboardHome";
@@ -17,6 +17,7 @@ import BlogPage from "./pages/BlogPage";
 import SignInPage from "./pages/SignInPage";
 import LogoutPage from "./pages/LogoutPage";
 import { VoiceRecognitionTest } from "./components/VoiceRecognitionTest";
+import CompareSessionsPage from "./pages/CompareSessionsPage";
 
 const pageVariants = {
   initial: { opacity: 0, y: 16, filter: 'blur(6px)' },
@@ -63,16 +64,34 @@ function AppContent() {
           </Route>
           <Route path="/interview-live" element={<PageWrapper><LiveInterview /></PageWrapper>} />
           <Route path="/interview-results" element={<PageWrapper><InterviewResults /></PageWrapper>} />
+          <Route path="/compare" element={<PageWrapper><CompareSessionsPage /></PageWrapper>} />
         </Routes>
       </AnimatePresence>
     </>
   );
 }
 
+import { useEffect } from "react";
+import { initDB, migrateFromLocalStorage } from "../utils/db";
+
 export default function App() {
+  useEffect(() => {
+    const setupDB = async () => {
+      try {
+        await initDB();
+        await migrateFromLocalStorage();
+      } catch (err) {
+        console.error("Failed to initialize database:", err);
+      }
+    };
+    setupDB();
+  }, []);
+
   return (
     <BrowserRouter>
-      <AppContent />
+      <ErrorBoundary>
+        <AppContent />
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

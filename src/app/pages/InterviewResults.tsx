@@ -28,6 +28,9 @@ import {
 import { motion } from "framer-motion";
 import SaveInterviewModal from "../components/SaveInterviewModal";
 import { saveInterviewSession } from "../../utils/interviewStorage";
+import * as Accordion from "@radix-ui/react-accordion";
+import { useCountUp } from "../../hooks/useCountUp";
+import RadarChart from "../components/results/RadarChart";
 
 // Mock data for the interview results
 const mockResultData = {
@@ -545,6 +548,99 @@ function QuestionAccordion({
   );
 }
 
+function getScoreGrade(score: number) {
+  if (score >= 90) return { grade: 'A', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' };
+  if (score >= 80) return { grade: 'B', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' };
+  if (score >= 70) return { grade: 'C', color: 'bg-amber-500/10 text-amber-400 border-amber-500/25' };
+  if (score >= 60) return { grade: 'D', color: 'bg-red-500/10 text-red-400 border-red-500/25' };
+  return { grade: 'F', color: 'bg-red-500/10 text-red-400 border-red-500/25' };
+}
+
+function computeRadarScores(evaluations: any[], communicationAnalytics: any[]) {
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  
+  let wpm = 135;
+  let fillerWordCount = 3;
+  let fluencyScore = 85;
+
+  if (communicationAnalytics && communicationAnalytics.length > 0) {
+    const totalWPM = communicationAnalytics.reduce((sum: number, a: any) => sum + (a.metrics?.wordsPerMinute || a.wpm || 0), 0);
+    wpm = Math.round(totalWPM / communicationAnalytics.length) || 135;
+
+    const totalFillers = communicationAnalytics.reduce((sum: number, a: any) => sum + (a.metrics?.fillerWords?.count ?? a.fillerWordCount ?? 0), 0);
+    fillerWordCount = totalFillers;
+
+    const totalFluency = communicationAnalytics.reduce((sum: number, a: any) => sum + (a.metrics?.fluencyScore || a.fluencyScore || 0), 0);
+    fluencyScore = Math.round(totalFluency / communicationAnalytics.length) || 85;
+  }
+
+  const technicalScores = evaluations.map(e => {
+    if (e.technicalScore !== undefined) return e.technicalScore;
+    if (e.score_breakdown?.technical_accuracy !== undefined) return e.score_breakdown.technical_accuracy * 10;
+    return (e.score ?? e.final_score ?? 0);
+  });
+
+  const problemSolvingScores = evaluations.map(e => {
+    if (e.depth !== undefined) return e.depth;
+    if (e.score_breakdown?.depth_score !== undefined) return e.score_breakdown.depth_score * 10;
+    return (e.score ?? e.final_score ?? 0);
+  });
+
+  const relevanceScores = evaluations.map(e => {
+    if (e.relevance !== undefined) return e.relevance;
+    if (e.score_breakdown?.keyword_score !== undefined) return e.score_breakdown.keyword_score * 10;
+    return (e.score ?? e.final_score ?? 0);
+  });
+
+  const structureScores = evaluations.map(e => {
+    if (e.clarity !== undefined) return e.clarity;
+    if (e.score_breakdown?.clarity_score !== undefined) return e.score_breakdown.clarity_score * 10;
+    return (e.score ?? e.final_score ?? 0);
+  });
+
+  return {
+    technicalAccuracy: Math.round(Math.min(100, avg(technicalScores) || 85)),
+    communication: Math.round(Math.min(100, fluencyScore)),
+    problemSolving: Math.round(Math.min(100, avg(problemSolvingScores) || 80)),
+    confidence: Math.round(Math.min(100, Math.max(0, 100 - (fillerWordCount * 4)))),
+    relevance: Math.round(Math.min(100, avg(relevanceScores) || 85)),
+    structure: Math.round(Math.min(100, avg(structureScores) || 80))
+  };
+}
+
+function DimensionRow({ label, score }: { label: string, score: number }) {
+  const count = useCountUp(score);
+  const [width, setWidth] = useState("0%");
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setWidth(`${score}%`);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [score]);
+
+  const getBarColor = (s: number) => {
+    if (s >= 85) return "bg-emerald-500";
+    if (s >= 70) return "bg-amber-500";
+    return "bg-red-500";
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5 w-full">
+      <div className="flex justify-between items-center text-sm">
+        <span className="font-semibold text-text-secondary">{label}</span>
+        <span className="font-extrabold text-white">{count}%</span>
+      </div>
+      <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-1000 ease-out ${getBarColor(score)}`}
+          style={{ width }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function CircularProgress({ score }: { score: number }) {
   const radius = 54;
   const strokeWidth = 6;
@@ -679,8 +775,20 @@ export default function InterviewResults() {
       idealAnswer: q.ideal_answer,
       score: evaluations[idx]?.final_score || 0,
       improvements: evaluations[idx]?.improvements || [],
+      strengths: evaluations[idx]?.strengths || [],
     })),
   } : mockResultData;
+
+  const radarScores = passedOverallScore !== undefined
+    ? computeRadarScores(evaluations, communicationAnalytics)
+    : {
+        technicalAccuracy: 92,
+        communication: 85,
+        problemSolving: 88,
+        confidence: 82,
+        relevance: 90,
+        structure: 86
+      };
 
   const handleCopyReport = async () => {
     const metricsText = resultData.metrics.map(m => `- ${m.label}: ${m.score}% (${m.feedback})`).join("\n");
@@ -770,7 +878,7 @@ ${questionsText}
   };
 
   // Save interview to history
-  const handleSaveInterview = () => {
+  const handleSaveInterview = async () => {
     try {
       const questionsAnswered = userAnswers.filter((a: string) => a && a.trim()).length;
       
@@ -778,7 +886,7 @@ ${questionsText}
       const durationMinutes = Math.floor(realQuestions.length * 2);
       const duration = `${durationMinutes} min`;
       
-      saveInterviewSession({
+      await saveInterviewSession({
         date: resultData.date,
         dateShort: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         role: resultData.role,
@@ -1005,369 +1113,77 @@ ${questionsText}
           </div>
         </div>
 
-        {/* Metrics Grid */}
-        <div className="mb-8">
-          <h2
-            style={{
-              fontFamily: "'Montserrat', sans-serif",
-              fontWeight: 700,
-              fontSize: "1.25rem",
-              color: "var(--text-primary)",
-              marginBottom: "20px",
-            }}
-          >
-            Performance Breakdown
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {resultData.metrics.map((metric) => (
-              <MetricCard key={metric.label} {...metric} />
-            ))}
+        {/* Section B — Radar chart + per-dimension breakdown */}
+        <div className="glass-panel p-6 lg:p-8 mb-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+          {/* Left half: RadarChart centered, size=300 */}
+          <div className="lg:col-span-6 flex justify-center">
+            <RadarChart scores={radarScores} size={300} animated={true} />
+          </div>
+          
+          {/* Right half: 6 metric rows */}
+          <div className="lg:col-span-6 flex flex-col gap-5">
+            <h3 className="text-lg font-bold text-white mb-2" style={{ fontFamily: "'Montserrat', sans-serif" }}>
+              Performance Metrics
+            </h3>
+            <div className="flex flex-col gap-4">
+              <DimensionRow label="Technical Accuracy" score={radarScores.technicalAccuracy} />
+              <DimensionRow label="Communication" score={radarScores.communication} />
+              <DimensionRow label="Problem Solving" score={radarScores.problemSolving} />
+              <DimensionRow label="Confidence" score={radarScores.confidence} />
+              <DimensionRow label="Relevance" score={radarScores.relevance} />
+              <DimensionRow label="Structure" score={radarScores.structure} />
+            </div>
           </div>
         </div>
 
-        {/* Communication Analytics Section */}
-        {communicationAnalytics && communicationAnalytics.length > 0 && (
+        {/* AI Summary Section */}
+        {resultData.summary && (
           <div className="mb-8">
-            <h2
-              style={{
-                fontFamily: "'Montserrat', sans-serif",
-                fontWeight: 700,
-                fontSize: "1.25rem",
-                color: "var(--text-primary)",
-                marginBottom: "20px",
-              }}
+            <div
+              className="glass-panel p-6 lg:p-8 border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 to-purple-500/5"
+              style={{ boxShadow: "0 8px 32px rgba(99, 102, 241, 0.08)" }}
             >
-              Communication Analytics
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Words Per Minute */}
-              <div
-                className="glass-panel p-5"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "rgba(16, 185, 129, 0.15)" }}
-                  >
-                    <TrendingUp size={18} strokeWidth={2} style={{ color: "#34D399" }} />
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontWeight: 600,
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    Speaking Pace
-                  </h3>
+              <div className="flex items-start gap-4 mb-5">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center flex-shrink-0 shadow-lg">
+                  <Sparkles size={24} className="text-white" strokeWidth={2.5} />
                 </div>
-                <div className="flex items-baseline gap-2">
-                  <span
+                <div>
+                  <h2
                     style={{
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
-                      fontSize: "2rem",
+                      fontSize: "1.5rem",
                       color: "var(--text-primary)",
+                      marginBottom: "6px",
+                      letterSpacing: "-0.02em",
                     }}
                   >
-                    {Math.round(communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.wordsPerMinute, 0) / communicationAnalytics.length)}
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    WPM
-                  </span>
+                    🤖 AI Interview Summary
+                  </h2>
+                  <p className="text-indigo-300 text-sm font-semibold">
+                    Comprehensive analysis based on your interview performance
+                  </p>
                 </div>
-                <p
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.75rem",
-                    color: "var(--text-secondary)",
-                    marginTop: "8px",
-                  }}
-                >
-                  Ideal range: 120-150 WPM
-                </p>
               </div>
-
-              {/* Fluency Score */}
-              <div
-                className="glass-panel p-5"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "rgba(108, 92, 231, 0.15)" }}
-                  >
-                    <Zap size={18} strokeWidth={2} style={{ color: "var(--accent-primary)" }} />
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontWeight: 600,
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    Fluency Score
-                  </h3>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span
-                    style={{
-                      fontFamily: "'Montserrat', sans-serif",
-                      fontWeight: 800,
-                      fontSize: "2rem",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {Math.round(communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.fluencyScore, 0) / communicationAnalytics.length)}
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    %
-                  </span>
-                </div>
+              <div className="bg-surface-2/60 backdrop-blur-sm rounded-xl p-6 border border-glass-border shadow-sm">
                 <p
                   style={{
                     fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.75rem",
-                    color: "var(--text-secondary)",
-                    marginTop: "8px",
+                    fontSize: "1rem",
+                    color: "var(--text-primary)",
+                    lineHeight: 1.9,
+                    fontWeight: 400,
                   }}
                 >
-                  Based on pace, fillers & pauses
-                </p>
-              </div>
-
-              {/* Filler Words */}
-              <div
-                className="glass-panel p-5"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "rgba(245, 158, 11, 0.15)" }}
-                  >
-                    <Pause size={18} strokeWidth={2} style={{ color: "#FBBF24" }} />
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontWeight: 600,
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    Filler Words
-                  </h3>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span
-                    style={{
-                      fontFamily: "'Montserrat', sans-serif",
-                      fontWeight: 800,
-                      fontSize: "2rem",
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.fillerWords.count, 0)}
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    total
-                  </span>
-                </div>
-                <p
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.75rem",
-                    color: "var(--text-secondary)",
-                    marginTop: "8px",
-                  }}
-                >
-                  Um, uh, like, you know
+                  {resultData.summary}
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* AI Summary Section - ENHANCED */}
+        {/* Section C — Question-by-question breakdown */}
         <div className="mb-8">
-          <div
-            className="glass-panel p-6 lg:p-8 border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 to-purple-500/5"
-            style={{ boxShadow: "0 8px 32px rgba(99, 102, 241, 0.08)" }}
-          >
-            <div className="flex items-start gap-4 mb-5">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center flex-shrink-0 shadow-lg">
-                <Sparkles size={24} className="text-white" strokeWidth={2.5} />
-              </div>
-              <div>
-                <h2
-                  style={{
-                    fontFamily: "'Montserrat', sans-serif",
-                    fontWeight: 800,
-                    fontSize: "1.5rem",
-                    color: "var(--text-primary)",
-                    marginBottom: "6px",
-                    letterSpacing: "-0.02em",
-                  }}
-                >
-                  🤖 AI Interview Summary
-                </h2>
-                <p
-                  className="text-indigo-300 text-sm font-semibold"
-                >
-                  Comprehensive analysis based on your interview performance
-                </p>
-              </div>
-            </div>
-            <div
-              className="bg-surface-2/60 backdrop-blur-sm rounded-xl p-6 border border-glass-border shadow-sm"
-            >
-              <p
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontSize: "1rem",
-                  color: "var(--text-primary)",
-                  lineHeight: 1.9,
-                  fontWeight: 400,
-                }}
-              >
-                {resultData.summary}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Strengths & Weaknesses */}
-        <div className="mb-8">
-          <h2
-            style={{
-              fontFamily: "'Montserrat', sans-serif",
-              fontWeight: 700,
-              fontSize: "1.25rem",
-              color: "var(--text-primary)",
-              marginBottom: "20px",
-            }}
-          >
-            Key Insights
-          </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Strengths */}
-            <div
-              className="glass-panel p-6"
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                  <Check size={18} className="text-emerald-400" strokeWidth={2.5} />
-                </div>
-                <h3
-                  style={{
-                    fontFamily: "'Montserrat', sans-serif",
-                    fontWeight: 700,
-                    fontSize: "1.1rem",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  Strengths
-                </h3>
-              </div>
-              <motion.ul 
-                variants={staggerContainer}
-                initial="hidden"
-                animate="show"
-                className="flex flex-col gap-3"
-              >
-                {resultData.strengths.map((strength, idx) => (
-                  <motion.li
-                    key={idx}
-                    variants={staggerItem}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5"
-                  >
-                    <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0 mt-0.5" strokeWidth={2} />
-                    <p
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontSize: "0.875rem",
-                        color: "emerald-200",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {strength}
-                    </p>
-                  </motion.li>
-                ))}
-              </motion.ul>
-            </div>
-
-            {/* Areas for Improvement */}
-            <div
-              className="glass-panel p-6"
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                  <AlertTriangle size={18} className="text-amber-400" strokeWidth={2.5} />
-                </div>
-                <h3
-                  style={{
-                    fontFamily: "'Montserrat', sans-serif",
-                    fontWeight: 700,
-                    fontSize: "1.1rem",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  Areas for Improvement
-                </h3>
-              </div>
-              <motion.ul 
-                variants={staggerContainer}
-                initial="hidden"
-                animate="show"
-                className="flex flex-col gap-3"
-              >
-                {resultData.weaknesses.map((weakness, idx) => (
-                  <motion.li
-                    key={idx}
-                    variants={staggerItem}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-amber-500/20 bg-amber-500/5"
-                  >
-                    <AlertTriangle size={18} className="text-amber-400 flex-shrink-0 mt-0.5" strokeWidth={2} />
-                    <p
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontSize: "0.875rem",
-                        color: "amber-200",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {weakness}
-                    </p>
-                  </motion.li>
-                ))}
-              </motion.ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Detailed Question Review */}
-        <div>
           <div className="flex items-center justify-between mb-6">
             <h2
               style={{
@@ -1389,11 +1205,130 @@ ${questionsText}
               {resultData.questions.length} questions answered
             </span>
           </div>
-          <div className="flex flex-col gap-4">
-            {resultData.questions.map((question, index) => (
-              <QuestionAccordion key={question.id} question={question} index={index} />
-            ))}
-          </div>
+
+          <Accordion.Root type="single" collapsible className="flex flex-col gap-4">
+            {resultData.questions.map((question, index) => {
+              const { grade, color: badgeColor } = getScoreGrade(question.score);
+              const truncatedQuestion = question.question.length > 80 
+                ? question.question.substring(0, 80) + "..." 
+                : question.question;
+                
+              return (
+                <Accordion.Item
+                  key={question.id || index}
+                  value={`question-${index}`}
+                  className="glass-panel overflow-hidden border border-glass-border rounded-2xl"
+                >
+                  <Accordion.Header className="flex">
+                    <Accordion.Trigger className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors text-left outline-none group">
+                      <div className="flex items-start gap-4 flex-1">
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                          style={{ backgroundColor: "rgba(108, 92, 231, 0.15)" }}
+                        >
+                          <span
+                            style={{
+                              fontFamily: "'Montserrat', sans-serif",
+                              fontWeight: 700,
+                              fontSize: "0.875rem",
+                              color: "var(--accent-primary)",
+                            }}
+                          >
+                            {index + 1}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p
+                            style={{
+                              fontFamily: "'Inter', sans-serif",
+                              fontWeight: 600,
+                              fontSize: "0.9rem",
+                              color: "var(--text-primary)",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {truncatedQuestion}
+                          </p>
+                        </div>
+                        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border flex-shrink-0 ${badgeColor}`}>
+                          <span className="font-bold text-xs">
+                            Grade {grade} ({question.score}%)
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronDown
+                        size={18}
+                        strokeWidth={2}
+                        className="text-text-secondary ml-3 flex-shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-180"
+                      />
+                    </Accordion.Trigger>
+                  </Accordion.Header>
+
+                  <Accordion.Content className="overflow-hidden border-t border-glass-border data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+                      className="p-5 flex flex-col gap-5"
+                    >
+                      {/* Full Question */}
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Full Question</h4>
+                        <p className="text-sm text-white leading-relaxed">{question.question}</p>
+                      </div>
+
+                      {/* Candidate's Answer */}
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Your Answer</h4>
+                        <div className="p-4 rounded-xl border border-glass-border bg-white/5">
+                          <p className="text-sm text-white leading-relaxed">{question.yourAnswer}</p>
+                        </div>
+                      </div>
+
+                      {/* AI Feedback (Strengths and improvements) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">Strength</h4>
+                          <p className="text-sm text-emerald-100/90 leading-relaxed">
+                            {question.strengths && question.strengths.length > 0 ? (
+                              question.strengths.join(", ")
+                            ) : (
+                              "Demonstrated solid core technical skills and logical structuring."
+                            )}
+                          </p>
+                        </div>
+                        <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-2">Gap / Improvement</h4>
+                          <p className="text-sm text-amber-100/90 leading-relaxed">
+                            {question.improvements && question.improvements.length > 0 ? (
+                              question.improvements.join(", ")
+                            ) : (
+                              "Could add more specific quantifiable metrics and outline STAR framework."
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Individual Score Bar */}
+                      <div>
+                        <div className="flex justify-between items-center text-xs font-bold text-text-secondary mb-1">
+                          <span>Question Score</span>
+                          <span>{question.score}%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-primary animate-pulse"
+                            style={{ width: `${question.score}%` }}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  </Accordion.Content>
+                </Accordion.Item>
+              );
+            })}
+          </Accordion.Root>
         </div>
       </div>
     </div>

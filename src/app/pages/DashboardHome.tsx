@@ -19,6 +19,7 @@ import { NotificationDropdown } from "../components/dashboard/NotificationDropdo
 import { useNavigate } from "react-router";
 import { getInterviewHistory, getHistoryStats, type InterviewSession } from "../../utils/interviewStorage";
 import { useCountUp } from "../../hooks/useCountUp";
+import { PageLoader } from "../components";
 
 const quickRoles = [
   { label: "Software Engineer", icon: "💻", color: "#EFF6FF", text: "#2563EB" },
@@ -67,6 +68,7 @@ export default function DashboardHome() {
   const [showModal, setShowModal] = useState(false);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({ totalSessions: 0, averageScore: 0, bestScore: 0, recentTrend: 0 });
+  const [loading, setLoading] = useState(true);
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -74,61 +76,68 @@ export default function DashboardHome() {
   });
   const navigate = useNavigate();
 
-  // Load recent sessions from localStorage
+  // Load recent sessions from IndexedDB
   useEffect(() => {
-    const loadRecentSessions = () => {
-      const history = getInterviewHistory();
-      const historyStats = getHistoryStats();
-      
-      setStats(historyStats);
-      
-      // Transform to match UI format
-      const formattedSessions = history.slice(0, 3).map((session: InterviewSession) => {
-        const sessionDate = new Date(session.timestamp);
-        const now = new Date();
-        const diffInMs = now.getTime() - sessionDate.getTime();
-        const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-        const diffInDays = Math.floor(diffInHours / 24);
+    const loadRecentSessions = async () => {
+      setLoading(true);
+      try {
+        const history = await getInterviewHistory();
+        const historyStats = await getHistoryStats();
         
-        let dateDisplay = "";
-        if (diffInHours < 1) {
-          dateDisplay = "Just now";
-        } else if (diffInHours < 24) {
-          dateDisplay = `Today, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-        } else if (diffInDays === 1) {
-          dateDisplay = `Yesterday, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-        } else {
-          dateDisplay = sessionDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-        }
-
-        // Determine tags based on difficulty and score
-        const tags = [];
-        if (session.difficulty === 'hard') {
-          tags.push('Technical');
-        } else if (session.difficulty === 'medium') {
-          tags.push('Technical', 'Behavioral');
-        } else {
-          tags.push('Behavioral');
-        }
+        setStats(historyStats);
         
-        if (session.score >= 85) {
-          tags.push('Excellent');
-        }
+        // Transform to match UI format
+        const formattedSessions = history.slice(0, 3).map((session: InterviewSession) => {
+          const sessionDate = new Date(session.timestamp);
+          const now = new Date();
+          const diffInMs = now.getTime() - sessionDate.getTime();
+          const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+          const diffInDays = Math.floor(diffInHours / 24);
+          
+          let dateDisplay = "";
+          if (diffInHours < 1) {
+            dateDisplay = "Just now";
+          } else if (diffInHours < 24) {
+            dateDisplay = `Today, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+          } else if (diffInDays === 1) {
+            dateDisplay = `Yesterday, ${sessionDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+          } else {
+            dateDisplay = sessionDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          }
 
-        return {
-          id: session.id,
-          role: session.role,
-          level: session.level,
-          score: session.score,
-          date: dateDisplay,
-          tags: tags.slice(0, 2),
-          color: roleColors[session.role] || roleColors.default,
-          fullData: session.fullData,
-        };
-      });
-      
-      setRecentSessions(formattedSessions);
-      console.log(`📊 Loaded ${formattedSessions.length} recent sessions`);
+          // Determine tags based on difficulty and score
+          const tags = [];
+          if (session.difficulty === 'hard') {
+            tags.push('Technical');
+          } else if (session.difficulty === 'medium') {
+            tags.push('Technical', 'Behavioral');
+          } else {
+            tags.push('Behavioral');
+          }
+          
+          if (session.score >= 85) {
+            tags.push('Excellent');
+          }
+
+          return {
+            id: session.id,
+            role: session.role,
+            level: session.level,
+            score: session.score,
+            date: dateDisplay,
+            tags: tags.slice(0, 2),
+            color: roleColors[session.role] || roleColors.default,
+            fullData: session.fullData,
+          };
+        });
+        
+        setRecentSessions(formattedSessions);
+        console.log(`📊 Loaded ${formattedSessions.length} recent sessions`);
+      } catch (err) {
+        console.error("Failed to load recent sessions:", err);
+      } finally {
+        setLoading(false);
+      }
     };
     
     loadRecentSessions();  // Framer Motion variants
@@ -165,6 +174,10 @@ export default function DashboardHome() {
   const avgScoreCount = useCountUp(stats.averageScore || 0);
   const bestScoreCount = useCountUp(stats.bestScore || 0);
   const totalSessionsCount = useCountUp(stats.totalSessions || 0);
+
+  if (loading) {
+    return <PageLoader />;
+  }
 
   return (
     <>

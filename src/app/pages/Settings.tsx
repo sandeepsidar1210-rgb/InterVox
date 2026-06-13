@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Settings as SettingsIcon, Moon, Sun, Contrast, Mic, Mail, TrendingUp, Megaphone, AlertTriangle, Trash2, Play, VolumeX } from "lucide-react";
 import { useSarvamTTS } from "../../hooks/useSarvamTTS";
+import { getSetting, saveSetting } from "../../utils/db";
 
 function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (value: boolean) => void }) {
   return (
@@ -44,9 +45,21 @@ export default function Settings() {
     productUpdates: false,
   });
 
-  const [selectedVoice, setSelectedVoice] = useState(() => {
-    return localStorage.getItem("intervox_voice_preference") || "kavya";
-  });
+  const [selectedVoice, setSelectedVoice] = useState("kavya");
+  
+  useEffect(() => {
+    const loadVoiceSetting = async () => {
+      try {
+        const voice = await getSetting("intervox_voice_preference");
+        if (voice) {
+          setSelectedVoice(voice);
+        }
+      } catch (err) {
+        console.error("Failed to load voice setting:", err);
+      }
+    };
+    loadVoiceSetting();
+  }, []);
   
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
 
@@ -58,9 +71,13 @@ export default function Settings() {
     setNotifications((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleVoiceChange = (voiceId: string) => {
+  const handleVoiceChange = async (voiceId: string) => {
     setSelectedVoice(voiceId);
-    localStorage.setItem("intervox_voice_preference", voiceId);
+    try {
+      await saveSetting("intervox_voice_preference", voiceId);
+    } catch (err) {
+      console.error("Failed to save voice setting:", err);
+    }
   };
 
   const handlePreviewVoice = async (voiceId: string) => {
