@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route } from "react-router";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router";
+import { AnimatePresence, motion } from "framer-motion";
+import { ProgressBar } from "./components";
 import LandingPage from "./pages/LandingPage";
 import DashboardLayout from "./pages/DashboardLayout";
 import DashboardHome from "./pages/DashboardHome";
@@ -16,28 +18,61 @@ import SignInPage from "./pages/SignInPage";
 import LogoutPage from "./pages/LogoutPage";
 import { VoiceRecognitionTest } from "./components/VoiceRecognitionTest";
 
+const pageVariants = {
+  initial: { opacity: 0, y: 16, filter: 'blur(6px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: { duration: 0.35, ease: [0.4, 0, 0.2, 1] } },
+  exit:    { opacity: 0, y: -10, filter: 'blur(4px)', transition: { duration: 0.2 } }
+};
+
+function PageWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <motion.div
+      variants={pageVariants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      className="w-full flex-1 flex flex-col min-h-0"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function AppContent() {
+  const location = useLocation();
+
+  return (
+    <>
+      <ProgressBar />
+      <AnimatePresence mode="wait">
+        <Routes location={location} key={location.pathname}>
+          <Route path="/" element={<PageWrapper><LandingPage /></PageWrapper>} />
+          <Route path="/ai-practice" element={<PageWrapper><AIPracticePage /></PageWrapper>} />
+          <Route path="/communication-practice" element={<PageWrapper><CommunicationPracticePage /></PageWrapper>} />
+          <Route path="/blog" element={<PageWrapper><BlogPage /></PageWrapper>} />
+          <Route path="/signin" element={<PageWrapper><SignInPage /></PageWrapper>} />
+          <Route path="/logout" element={<PageWrapper><LogoutPage /></PageWrapper>} />
+          <Route path="/voice-test" element={<PageWrapper><VoiceRecognitionTest /></PageWrapper>} />
+          <Route path="/dashboard" element={<DashboardLayout />}>
+            <Route index element={<PageWrapper><DashboardHome /></PageWrapper>} />
+            <Route path="practice" element={<PageWrapper><Practice /></PageWrapper>} />
+            <Route path="analytics" element={<PageWrapper><Analytics /></PageWrapper>} />
+            <Route path="history" element={<PageWrapper><History /></PageWrapper>} />
+            <Route path="profile" element={<PageWrapper><Profile /></PageWrapper>} />
+            <Route path="settings" element={<PageWrapper><Settings /></PageWrapper>} />
+          </Route>
+          <Route path="/interview-live" element={<PageWrapper><LiveInterview /></PageWrapper>} />
+          <Route path="/interview-results" element={<PageWrapper><InterviewResults /></PageWrapper>} />
+        </Routes>
+      </AnimatePresence>
+    </>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/ai-practice" element={<AIPracticePage />} />
-        <Route path="/communication-practice" element={<CommunicationPracticePage />} />
-        <Route path="/blog" element={<BlogPage />} />
-        <Route path="/signin" element={<SignInPage />} />
-        <Route path="/logout" element={<LogoutPage />} />
-        <Route path="/voice-test" element={<VoiceRecognitionTest />} />
-        <Route path="/dashboard" element={<DashboardLayout />}>
-          <Route index element={<DashboardHome />} />
-          <Route path="practice" element={<Practice />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="history" element={<History />} />
-          <Route path="profile" element={<Profile />} />
-          <Route path="settings" element={<Settings />} />
-        </Route>
-        <Route path="/interview-live" element={<LiveInterview />} />
-        <Route path="/interview-results" element={<InterviewResults />} />
-      </Routes>
+      <AppContent />
     </BrowserRouter>
   );
 }

@@ -9,9 +9,9 @@ const features = [
     title: "Internship Preparation",
     description:
       "Kickstart your career journey with curated entry-level interview simulations. Build confidence with HR rounds, aptitude prep, and campus placement practice.",
-    color: "#7C3AED",
-    bgColor: "#F5F3FF",
-    borderColor: "#EDE9FE",
+    color: "#a78bfa",
+    bgColor: "rgba(167, 139, 250, 0.15)",
+    borderColor: "rgba(167, 139, 250, 0.2)",
     points: [
       "Campus & HR round simulations",
       "Soft skills & communication drills",
@@ -26,9 +26,9 @@ const features = [
     title: "Fresher Job Preparation",
     description:
       "Land your first full-time role with targeted practice for technical screenings, behavioral rounds, and role-specific mock sessions designed for freshers.",
-    color: "#2563EB",
-    bgColor: "#EFF6FF",
-    borderColor: "#BFDBFE",
+    color: "#00CEC9",
+    bgColor: "rgba(0, 206, 201, 0.15)",
+    borderColor: "rgba(0, 206, 201, 0.2)",
     points: [
       "Technical & coding interview prep",
       "Behavioral (STAR method) coaching",
@@ -44,9 +44,9 @@ const features = [
     title: "Experienced Job Prep",
     description:
       "Level up to senior roles with advanced case study simulations, leadership scenario practice, and negotiation coaching tailored for seasoned professionals.",
-    color: "#0891B2",
-    bgColor: "#ECFEFF",
-    borderColor: "#A5F3FC",
+    color: "#38bdf8",
+    bgColor: "rgba(56, 189, 248, 0.15)",
+    borderColor: "rgba(56, 189, 248, 0.2)",
     points: [
       "Senior & leadership round prep",
       "Case study & scenario questions",
@@ -59,12 +59,12 @@ const features = [
 
 export function FeaturesGrid() {
   return (
-    <section className="bg-white py-20 lg:py-28">
+    <section className="bg-background py-20 lg:py-28">
       <div className="max-w-7xl mx-auto px-6 lg:px-8">
         {/* Section Header */}
         <div className="text-center mb-16 flex flex-col items-center gap-4">
           <span
-            className="inline-flex items-center gap-2 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] px-4 py-1.5 rounded-full text-xs"
+            className="inline-flex items-center gap-2 text-primary bg-primary/10 border border-primary/20 px-4 py-1.5 rounded-full text-xs"
             style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}
           >
             Career-Level Tracks
@@ -76,18 +76,18 @@ export function FeaturesGrid() {
               fontSize: "clamp(1.75rem, 3.5vw, 2.5rem)",
               lineHeight: 1.2,
               letterSpacing: "-0.025em",
-              color: "#1E293B",
+              color: "var(--text-primary)",
             }}
           >
             Mock Interviews for{" "}
-            <span className="text-[#2563EB]">All Career Levels</span>
+            <span className="text-secondary font-bold">All Career Levels</span>
           </h2>
           <p
             style={{
               fontFamily: "'Inter', sans-serif",
               fontSize: "0.9375rem",
               lineHeight: 1.7,
-              color: "#64748B",
+              color: "var(--text-secondary)",
             }}
           >
             Whether you're just starting out or chasing that next big role, InterVox has a tailored path for you.
@@ -104,14 +104,16 @@ export function FeaturesGrid() {
                 tiltMaxAngleX={10}
                 tiltMaxAngleY={10}
                 perspective={1000}
-                scale={1.05}
-                className="relative flex flex-col rounded-2xl border p-8 transition-all duration-200 hover:-translate-y-1 hover:shadow-2xl group"
+                scale={1.02}
+                className={`relative flex flex-col p-8 transition-all duration-300 hover:-translate-y-1 group ${
+                  feature.highlighted ? "rounded-2xl" : "glass-panel"
+                }`}
                 style={{
-                  backgroundColor: feature.highlighted ? feature.color : "#FFFFFF",
-                  borderColor: feature.highlighted ? feature.color : "#E2E8F0",
+                  backgroundColor: feature.highlighted ? "var(--accent-primary)" : undefined,
+                  borderColor: feature.highlighted ? "var(--accent-primary)" : undefined,
                   boxShadow: feature.highlighted
-                    ? "0 20px 60px rgba(37,99,235,0.25)"
-                    : "0 4px 24px rgba(0,0,0,0.06)",
+                    ? "0 20px 60px var(--accent-glow)"
+                    : undefined,
                 }}
               >
                 {/* Badge */}
@@ -121,9 +123,9 @@ export function FeaturesGrid() {
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontWeight: 700,
-                      backgroundColor: feature.highlighted ? "#1D4ED8" : feature.bgColor,
-                      color: feature.highlighted ? "#BFDBFE" : feature.color,
-                      border: `1px solid ${feature.highlighted ? "#1E40AF" : feature.borderColor}`,
+                      backgroundColor: feature.highlighted ? "rgba(255,255,255,0.2)" : feature.bgColor,
+                      color: feature.highlighted ? "#FFFFFF" : feature.color,
+                      border: `1px solid ${feature.highlighted ? "rgba(255,255,255,0.3)" : feature.borderColor}`,
                     }}
                   >
                     {feature.badge}
@@ -166,7 +168,7 @@ export function FeaturesGrid() {
                     fontWeight: 700,
                     fontSize: "1.25rem",
                     lineHeight: 1.3,
-                    color: feature.highlighted ? "#FFFFFF" : "#1E293B",
+                    color: feature.highlighted ? "#FFFFFF" : "var(--text-primary)",
                   }}
                 >
                   {feature.title}
@@ -179,7 +181,7 @@ export function FeaturesGrid() {
                     fontFamily: "'Inter', sans-serif",
                     fontSize: "0.875rem",
                     lineHeight: 1.7,
-                    color: feature.highlighted ? "rgba(255,255,255,0.75)" : "#64748B",
+                    color: feature.highlighted ? "rgba(255,255,255,0.85)" : "var(--text-secondary)",
                   }}
                 >
                   {feature.description}
@@ -199,7 +201,7 @@ export function FeaturesGrid() {
                         style={{
                           fontFamily: "'Inter', sans-serif",
                           fontSize: "0.8125rem",
-                          color: feature.highlighted ? "rgba(255,255,255,0.8)" : "#475569",
+                          color: feature.highlighted ? "rgba(255,255,255,0.9)" : "var(--text-secondary)",
                         }}
                       >
                         {point}

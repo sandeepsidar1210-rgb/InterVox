@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useReducer } from "react";
 import {
   Camera,
   Mic,
@@ -11,17 +11,22 @@ import {
   SkipForward,
   CameraOff,
   Activity,
+  Send,
+  Loader2
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router";
+import { motion, AnimatePresence } from "framer-motion";
 import { useWhisperRecognition } from "../../hooks/useWhisperRecognition";
 import { useSarvamTTS } from "../../hooks/useSarvamTTS";
 import { useEvaluation, EvaluationResult } from "../../hooks/useEvaluation";
 import { useQuestionGenerator, QuestionData } from "../../hooks/useQuestionGenerator";
-import { useCommunicationAnalytics, AnswerAnalytics } from "../../hooks/useCommunicationAnalytics";
+import { useCommunicationAnalytics } from "../../hooks/useCommunicationAnalytics";
+import { useInterviewState } from "../../hooks/useInterviewState";
+import { InterviewerAvatar, AudioVisualizer } from "../components";
 
 interface InterviewConfig {
   role: string;
-  difficulty: 'easy' | 'medium' | 'hard';
+  difficulty: "easy" | "medium" | "hard";
   questionCount: number;
 }
 
@@ -31,6 +36,72 @@ interface PreviousQA {
 }
 
 type InputMode = "voice" | "text";
+
+// 1. Consolidated state shape & actions for Task 6
+interface InterviewState {
+  questions: QuestionData[];
+  answers: string[];
+  previousQA: PreviousQA[];
+  currentQuestionIndex: number;
+  evaluations: EvaluationResult[];
+}
+
+const initialInterviewState: InterviewState = {
+  questions: [],
+  answers: [],
+  previousQA: [],
+  currentQuestionIndex: 0,
+  evaluations: [],
+};
+
+type InterviewAction =
+  | { type: "SET_QUESTIONS"; payload: QuestionData[] }
+  | { type: "ADD_QUESTION"; payload: QuestionData }
+  | { type: "ADD_ANSWER"; payload: { question: string; answer: string } }
+  | { type: "SET_QUESTION"; payload: number }
+  | { type: "ADD_SCORE"; payload: EvaluationResult }
+  | { type: "RESET" };
+
+function interviewReducer(state: InterviewState, action: InterviewAction): InterviewState {
+  switch (action.type) {
+    case "SET_QUESTIONS":
+      return {
+        ...state,
+        questions: action.payload,
+      };
+    case "ADD_QUESTION":
+      return {
+        ...state,
+        questions: [...state.questions, action.payload],
+      };
+    case "ADD_ANSWER": {
+      const newAnswers = [...state.answers];
+      newAnswers[state.currentQuestionIndex] = action.payload.answer;
+      return {
+        ...state,
+        answers: newAnswers,
+        previousQA: [
+          ...state.previousQA,
+          { question: action.payload.question, answer: action.payload.answer },
+        ],
+      };
+    }
+    case "SET_QUESTION":
+      return {
+        ...state,
+        currentQuestionIndex: action.payload,
+      };
+    case "ADD_SCORE":
+      return {
+        ...state,
+        evaluations: [...state.evaluations, action.payload],
+      };
+    case "RESET":
+      return initialInterviewState;
+    default:
+      return state;
+  }
+}
 
 export default function LiveInterview() {
   const navigate = useNavigate();
@@ -42,15 +113,33 @@ export default function LiveInterview() {
   const animationFrameRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const previousQuestionRef = useRef<number>(-1); // Track previous question
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const previousQuestionRef = useRef<number>(-1);
 
   // Get interview configuration from navigation state
   const interviewConfig = (location.state as InterviewConfig) || {
-    role: 'software_engineer',
-    difficulty: 'medium' as const,
-    questionCount: 10,
+    role: "software_engineer",
+    difficulty: "medium" as const,
+    questionCount: 5, // Default to a shorter standard run of 5
   };
+
+  // State Management via consolidated useReducer
+  const [state, dispatch] = useReducer(interviewReducer, initialInterviewState);
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  // Selected Voice preference from localStorage
+  const selectedVoice = localStorage.getItem("intervox_voice_preference") || "kavya";
+  const voiceNameMap: Record<string, string> = {
+    kavya: "Meera (AI Professional)",
+    amit: "Amit (AI Technical Coach)",
+    meera: "Meera (AI Professional)",
+    arjun: "Arjun (AI Senior Engineer)",
+    ananya: "Ananya (AI Warm Partner)",
+  };
+  const interviewerName = voiceNameMap[selectedVoice] || "AI Interviewer";
 
   // Whisper Voice Recognition Hook (More Reliable)
   const {
@@ -63,38 +152,18 @@ export default function LiveInterview() {
   } = useWhisperRecognition();
 
   // Sarvam AI Text-to-Speech Hook (Indian voices)
-  const {
-    speak,
-    stop: stopSpeaking,
-    isSpeaking,
-  } = useSarvamTTS();
+  const { speak, stop: stopSpeaking, isSpeaking } = useSarvamTTS();
 
   // Evaluation Hook
-  const {
-    evaluateAnswer,
-    isEvaluating,
-    error: evaluationError,
-  } = useEvaluation();
+  const { evaluateAnswer, isEvaluating, error: evaluationError } = useEvaluation();
 
   // Question Generator Hook
-  const {
-    generateQuestion,
-    isGenerating,
-    error: questionError,
-  } = useQuestionGenerator();
+  const { generateQuestion, isGenerating, error: questionError } = useQuestionGenerator();
 
-  // State
-  const [questions, setQuestions] = useState<QuestionData[]>([]);
-  const [answers, setAnswers] = useState<string[]>([]);
-  const answersRef = useRef<string[]>([]); // Sync ref to prevent state timing issues
-  const [previousQA, setPreviousQA] = useState<PreviousQA[]>([]);
-  const previousQARef = useRef<PreviousQA[]>([]); // Sync ref for question context
-  const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [isEvaluatingAll, setIsEvaluatingAll] = useState(false);
-  const [isConversing, setIsConversing] = useState(false);
-  
   // Communication analytics
   const { startTracking, recordPause, analyzeAnswer, getAverageMetrics, allAnalytics } = useCommunicationAnalytics();
+  
+  // Local simple flags
   const [inputMode, setInputMode] = useState<InputMode>("voice");
   const [isRecording, setIsRecording] = useState(false);
   const [textAnswer, setTextAnswer] = useState("");
@@ -104,13 +173,25 @@ export default function LiveInterview() {
   const [hasUserInteracted, setHasUserInteracted] = useState(false); // Track user interaction for autoplay
   const [cameraPermission, setCameraPermission] = useState<"granted" | "denied" | "prompt">("prompt");
   const [audioLevel, setAudioLevel] = useState(0);
+  const [isEvaluatingAll, setIsEvaluatingAll] = useState(false);
+  const [isConversing, setIsConversing] = useState(false);
+
+  // Derive phase state using useInterviewState hook for Task 3d
+  const { phase } = useInterviewState({
+    isSpeaking,
+    isRecording,
+    isEvaluating,
+    isGenerating,
+    isConversing,
+    isEvaluatingAll,
+  });
 
   const totalQuestions = interviewConfig.questionCount;
-  const progress = ((currentQuestion + 1) / totalQuestions) * 100;
+  const progress = ((state.currentQuestionIndex + 1) / totalQuestions) * 100;
 
   const buildReactionFromAnswer = (answer: string) => {
     const trimmed = answer.trim();
-    if (!trimmed) {
+    if (!trimmed || trimmed === "No response was recorded.") {
       return "Let's continue.";
     }
     if (trimmed.length < 20) {
@@ -128,76 +209,62 @@ export default function LiveInterview() {
   // Generate first question on mount (start with behavioral/introduction)
   useEffect(() => {
     const loadFirstQuestion = async () => {
-      console.log('🎯 Starting with standard interview opener...');
-      console.log('   Config:', interviewConfig);
-
+      console.log("🎯 Starting with standard interview opener...");
       try {
-        // First question is ALWAYS "Tell me about yourself" - standard interview opener
         const firstQuestion = {
           question: "Tell me about yourself and your background.",
-          ideal_answer: "A strong answer should include: your current role and experience, relevant technical skills, notable achievements or projects, and what motivates you professionally.",
+          ideal_answer:
+            "A strong answer should include: your current role and experience, relevant technical skills, notable achievements or projects, and what motivates you professionally.",
           keywords: ["experience", "background", "skills", "expertise", "achievements", "passion", "goals"],
           role: interviewConfig.role,
-          difficulty: 'easy'
+          difficulty: "easy" as const,
         };
 
-        setQuestions([firstQuestion]);
-        setAnswers([]); // Initialize answers array
-        answersRef.current = []; // Initialize ref
-        console.log('✅ First question loaded: Tell me about yourself');
-
+        dispatch({ type: "SET_QUESTIONS", payload: [firstQuestion] });
+        
         // Auto-speak first question after a delay (gives user time to settle in)
-        console.log('🔊 Auto-speaking first question in 2 seconds...');
         setTimeout(() => {
           if (isSoundOn) {
-            console.log('🎤 Speaking first question:', firstQuestion.question.substring(0, 50));
-            speak(firstQuestion.question, { language: 'en-IN', speaker: 'kavya' });
+            console.log("🎤 Speaking first question:", firstQuestion.question.substring(0, 50));
+            speak(firstQuestion.question, { language: "en-IN", speaker: selectedVoice });
           }
-        }, 2000); // 2 second delay for better UX
+        }, 1800);
       } catch (error) {
-        console.error('❌ Error loading question:', error);
-        alert('Error: ' + (error instanceof Error ? error.message : 'Unknown error'));
+        console.error("❌ Error loading question:", error);
       }
     };
 
-    const timer = setTimeout(() => {
-      loadFirstQuestion();
-    }, 100);
-
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadFirstQuestion();
   }, []);
 
   // Auto-read question aloud when question changes (only after user interaction)
   useEffect(() => {
-    console.log('🎯 useEffect triggered - Current:', currentQuestion, 'Previous:', previousQuestionRef.current, 'Sound:', isSoundOn, 'User interacted:', hasUserInteracted);
-    
-    // Only auto-speak if:
-    // 1. Question number actually changed (not first button click)
-    // 2. Sound is on and user has interacted
-    const questionChanged = previousQuestionRef.current !== currentQuestion && previousQuestionRef.current !== -1;
-    
-    if (questionChanged && isSoundOn && hasUserInteracted && questions[currentQuestion]) {
-      const currentQuestionData = questions[currentQuestion];
-      const previousAnswer = answersRef.current[currentQuestion - 1] || '';
-      const reaction = currentQuestionData.reaction || (currentQuestion > 0 ? buildReactionFromAnswer(previousAnswer) : '');
+    const questionChanged =
+      previousQuestionRef.current !== state.currentQuestionIndex && previousQuestionRef.current !== -1;
+
+    if (questionChanged && isSoundOn && hasUserInteracted && state.questions[state.currentQuestionIndex]) {
+      const currentQuestionData = state.questions[state.currentQuestionIndex];
+      const previousAnswer = state.answers[state.currentQuestionIndex - 1] || "";
+      const reaction =
+        currentQuestionData.reaction ||
+        (state.currentQuestionIndex > 0 ? buildReactionFromAnswer(previousAnswer) : "");
       const speechText = reaction ? `${reaction} ${currentQuestionData.question}` : currentQuestionData.question;
 
-      console.log('🔊 Question CHANGED - Auto-speaking with Sarvam AI:', speechText.substring(0, 80));
-      
-      // Stop any current speech before starting new one
+      console.log("🔊 Question CHANGED - Auto-speaking with Sarvam AI:", speechText.substring(0, 80));
       stopSpeaking();
-      
-      // Small delay to ensure previous speech is fully stopped
+
       setTimeout(() => {
-        speak(speechText, { language: 'en-IN', speaker: 'kavya' });
+        speak(speechText, { language: "en-IN", speaker: selectedVoice });
       }, 150);
     }
-    
-    // Update previous question tracker
-    previousQuestionRef.current = currentQuestion;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentQuestion, isSoundOn, hasUserInteracted]);
+
+    previousQuestionRef.current = state.currentQuestionIndex;
+  }, [state.currentQuestionIndex, isSoundOn, hasUserInteracted]);
+
+  // Auto-scroll messaging chat layout
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [state.answers, state.currentQuestionIndex, state.questions]);
 
   // Initialize camera and microphone
   useEffect(() => {
@@ -215,7 +282,6 @@ export default function LiveInterview() {
         streamRef.current = stream;
         setCameraPermission("granted");
 
-        // Set up video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
@@ -238,7 +304,6 @@ export default function LiveInterview() {
     initMedia();
 
     return () => {
-      // Cleanup
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
@@ -264,41 +329,20 @@ export default function LiveInterview() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [currentQuestion]);
+  }, [state.currentQuestionIndex]);
 
   // Audio visualization
   useEffect(() => {
-    if (isRecording && analyserRef.current && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
+    if (isRecording && analyserRef.current) {
       const analyser = analyserRef.current;
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
 
       const draw = () => {
         animationFrameRef.current = requestAnimationFrame(draw);
-
         analyser.getByteFrequencyData(dataArray);
-
-        if (ctx) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          const barWidth = (canvas.width / bufferLength) * 2.5;
-          let x = 0;
-
-          for (let i = 0; i < bufferLength; i++) {
-            const barHeight = (dataArray[i] / 255) * canvas.height;
-            const gradient = ctx.createLinearGradient(0, canvas.height, 0, canvas.height - barHeight);
-            gradient.addColorStop(0, "#2563EB");
-            gradient.addColorStop(1, "#60A5FA");
-            ctx.fillStyle = gradient;
-            ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-            x += barWidth + 1;
-          }
-
-          // Calculate average volume for the pulsing effect
-          const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-          setAudioLevel(average);
-        }
+        const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+        setAudioLevel(average);
       };
 
       draw();
@@ -318,16 +362,10 @@ export default function LiveInterview() {
 
   const startRecording = async () => {
     try {
-      console.log('🎤 Starting recording with Whisper...');
-      
-      // Start communication analytics tracking
+      console.log("🎤 Starting recording with Whisper...");
       startTracking();
-      
-      // Start Whisper recording (handles audio capture + transcription)
       await startWhisperRecording();
-      
       setIsRecording(true);
-      console.log('✅ Recording started successfully');
     } catch (error) {
       console.error("Error starting recording:", error);
       setIsRecording(false);
@@ -335,22 +373,17 @@ export default function LiveInterview() {
   };
 
   const stopRecording = async () => {
-    console.log('🛑 Stopping recording...');
-    
+    console.log("🛑 Stopping recording...");
     try {
-      // Stop Whisper recording (will auto-transcribe)
       await stopWhisperRecording();
-      
       setIsRecording(false);
-      console.log('✅ Recording stopped successfully');
     } catch (error) {
       console.error("Error stopping recording:", error);
     }
   };
 
   const toggleRecording = () => {
-    setHasUserInteracted(true); // Enable auto-play for next questions
-    
+    setHasUserInteracted(true); // Enable auto-play
     if (isRecording) {
       stopRecording();
     } else {
@@ -359,10 +392,9 @@ export default function LiveInterview() {
   };
 
   const handleSubmit = async () => {
-    console.log('📤 Submitting answer...');
-    
-    let userAnswer = '';
-    if (inputMode === 'voice') {
+    console.log("📤 Submitting answer...");
+    let userAnswer = "";
+    if (inputMode === "voice") {
       if (isRecording) {
         setIsRecording(false);
         userAnswer = await stopWhisperRecording();
@@ -372,15 +404,12 @@ export default function LiveInterview() {
     } else {
       userAnswer = textAnswer;
     }
-    
-    if (!userAnswer || userAnswer.trim() === '' || !questions[currentQuestion]) {
-      console.log('⚠️ No answer provided or question not loaded');
-      // Still allow them to continue
-      setTimeout(() => {
-        resetTranscript();
-        handleNext();
-      }, 100);
-      return;
+
+    const currentQuestionData = stateRef.current.questions[stateRef.current.currentQuestionIndex];
+    if (!currentQuestionData) return;
+
+    if (!userAnswer || userAnswer.trim() === "") {
+      userAnswer = "No response was recorded.";
     }
 
     setIsConversing(true);
@@ -388,14 +417,14 @@ export default function LiveInterview() {
     let replyText = "";
 
     try {
-      const converseUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/interview/converse`;
+      const converseUrl = `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/interview/converse`;
       const response = await fetch(converseUrl, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: questions[currentQuestion].question,
+          question: currentQuestionData.question,
           user_input: userAnswer,
           role: interviewConfig.role,
           difficulty: interviewConfig.difficulty,
@@ -404,13 +433,13 @@ export default function LiveInterview() {
 
       if (response.ok) {
         const result = await response.json();
-        if (result.type === 'repeat' || result.type === 'clarification') {
+        if (result.type === "repeat" || result.type === "clarification") {
           isAnswer = false;
           replyText = result.reply || "";
         }
       }
     } catch (err) {
-      console.error('Error in conversation check:', err);
+      console.error("Error in conversation check:", err);
     } finally {
       setIsConversing(false);
     }
@@ -418,138 +447,72 @@ export default function LiveInterview() {
     if (!isAnswer) {
       console.log(`💬 Conversational response: "${replyText}"`);
       if (isSoundOn && replyText) {
-        speak(replyText, { language: 'en-IN', speaker: 'kavya' });
+        speak(replyText, { language: "en-IN", speaker: selectedVoice });
       }
       resetTranscript();
       setTextAnswer("");
-      return; // Do not advance to next question
+      return; // Stay on the same question
     }
 
-    console.log('💾 Storing answer...');
-    console.log(`   Current question index: ${currentQuestion}`);
-    console.log(`   Answer length: ${userAnswer.length} chars`);
-    console.log(`   Answer preview: "${userAnswer.substring(0, 100)}..."`);
-    
-    // Analyze communication metrics for this answer
-    const communicationMetrics = analyzeAnswer(userAnswer, currentQuestion);
-    console.log('📊 Communication Analytics:');
-    console.log(`   WPM: ${communicationMetrics.wordsPerMinute}`);
-    console.log(`   Filler words: ${communicationMetrics.fillerWords.count}`);
-    console.log(`   Fluency score: ${communicationMetrics.fluencyScore}%`);
-    
-    // Store the answer in BOTH state and ref (ref is synchronous)
-    const newAnswers = [...answersRef.current];
-    newAnswers[currentQuestion] = userAnswer;
-    answersRef.current = newAnswers;
-    
-    setAnswers(newAnswers);
-    
-    // Store this Q&A for context in next question generation
-    const updatedPreviousQA = [
-      ...previousQARef.current,
-      {
-        question: questions[currentQuestion].question,
+    // Save answer into state (Task 6 reducer replaces answersRef)
+    dispatch({
+      type: "ADD_ANSWER",
+      payload: {
+        question: currentQuestionData.question,
         answer: userAnswer,
-      }
-    ];
-    previousQARef.current = updatedPreviousQA;
-    setPreviousQA(updatedPreviousQA);
-    
-    console.log('✅ Answer stored successfully!');
-    console.log(`   Total answers stored: ${answersRef.current.length}`);
-    console.log(`   Answers array: [${answersRef.current.map((a, i) => `Q${i+1}: ${a ? a.substring(0,20)+'...' : 'empty'}`).join(', ')}]`);
-    
-    // Small delay to ensure state is updated before proceeding
+      },
+    });
+
+    analyzeAnswer(userAnswer, stateRef.current.currentQuestionIndex);
+
     setTimeout(() => {
       resetTranscript();
+      setTextAnswer("");
       handleNext();
-    }, 150); // Slightly longer delay to ensure answer is captured
+    }, 150);
   };
 
   const handleNext = async () => {
-    console.log('⏭️ Moving to next question...');
-    
-    // Stop recording if active
     if (isRecording) {
       stopRecording();
     }
-
-    // Ensure mediaRecorder is cleared
-    if (mediaRecorderRef.current) {
-      try {
-        if (mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop();
-        }
-      } catch (err) {
-        console.error('Cleanup error:', err);
-      }
-      mediaRecorderRef.current = null;
-    }
-
-    // Reset transcript for next question
     resetTranscript();
-    
-    // Clear audio chunks
     audioChunksRef.current = [];
 
-    if (currentQuestion < totalQuestions - 1) {
-      const nextQuestionIndex = currentQuestion + 1;
-      
-      // Generate next question if not already generated
-      if (!questions[nextQuestionIndex]) {
-        const contextQA = previousQARef.current;
-        console.log(`🎯 Generating question ${nextQuestionIndex + 1}/${totalQuestions}...`);
-        console.log(`   Previous Q&A context: ${contextQA.length} items`);
-        if (contextQA.length > 0) {
-          console.log(`   Last answer: "${contextQA[contextQA.length - 1].answer.substring(0, 60)}..."`);
-        }
-        
-        // Determine difficulty based on question progression
-        // First 30% - easy behavioral
-        // Next 40% - medium technical
-        // Last 30% - hard technical
-        let difficulty: 'easy' | 'medium' | 'hard';
+    const activeState = stateRef.current;
+    if (activeState.currentQuestionIndex < totalQuestions - 1) {
+      const nextQuestionIndex = activeState.currentQuestionIndex + 1;
+
+      if (!activeState.questions[nextQuestionIndex]) {
+        let difficulty: "easy" | "medium" | "hard" = "medium";
         const progressPercent = (nextQuestionIndex / totalQuestions) * 100;
-        
         if (progressPercent < 30) {
-          difficulty = 'easy'; // Behavioral/introduction questions
+          difficulty = "easy";
         } else if (progressPercent < 70) {
-          difficulty = 'medium'; // Technical questions
+          difficulty = "medium";
         } else {
-          difficulty = 'hard'; // Advanced technical questions
+          difficulty = "hard";
         }
-        
-        console.log(`   Difficulty: ${difficulty} (${progressPercent.toFixed(0)}% through interview)`);
-        
+
         const newQuestion = await generateQuestion({
           role: interviewConfig.role as any,
           difficulty: difficulty,
-          previous_qa: contextQA,
+          previous_qa: activeState.previousQA,
           use_ai: true,
         });
-        
+
         if (newQuestion) {
-          setQuestions(prev => [...prev, newQuestion]);
-          console.log('✅ Question generated:', newQuestion.question);
+          dispatch({ type: "ADD_QUESTION", payload: newQuestion });
         } else {
-          console.error('❌ Failed to generate next question');
-          // If question generation fails, evaluate and go to results
           await evaluateAllAnswersAndNavigate();
           return;
         }
       }
-      
-      setCurrentQuestion(nextQuestionIndex);
-      setTextAnswer("");
+
+      dispatch({ type: "SET_QUESTION", payload: nextQuestionIndex });
       setTimeRemaining(120);
-      console.log('✅ Ready for next question');
     } else {
-      // All questions completed - evaluate all answers and navigate to results
-      console.log('🎯 Interview complete! Waiting for final answer to save...');
-      
-      // Small delay to ensure last answer is fully captured in ref
       setTimeout(async () => {
-        console.log('🎯 Starting evaluation...');
         await evaluateAllAnswersAndNavigate();
       }, 200);
     }
@@ -557,90 +520,46 @@ export default function LiveInterview() {
 
   const evaluateAllAnswersAndNavigate = async () => {
     setIsEvaluatingAll(true);
-    
     try {
-      // Use ref to get latest answers (avoids state timing issues)
-      const finalAnswers = answersRef.current;
-      
-      console.log('🔍 Evaluating all answers...');
-      console.log(`   Total questions: ${questions.length}`);
-      console.log(`   Total answers captured: ${finalAnswers.length}`);
-      console.log(`   Answers preview: [${finalAnswers.map((a, i) => `Q${i+1}:${a?'✓':'✗'}`).join(', ')}]`);
-      
-      // Evaluate each Q&A pair
-      const evaluationPromises = questions.map(async (question, index) => {
-        const userAnswer = finalAnswers[index] || '';
-        
-        console.log(`\n📝 Question ${index + 1}/${questions.length}:`);
-        console.log(`   Q: ${question.question.substring(0, 60)}...`);
-        console.log(`   A: ${userAnswer ? userAnswer.substring(0, 60) + '...' : '❌ NO ANSWER'}`);
-        
-        if (!userAnswer.trim()) {
-          console.log('   ⚠️ Skipped - no answer provided');
-          return null; // Skip unanswered questions
+      const finalState = stateRef.current;
+      const finalAnswers = finalState.answers;
+
+      const evaluationPromises = finalState.questions.map(async (question, index) => {
+        const userAnswer = finalAnswers[index] || "";
+        if (!userAnswer.trim() || userAnswer === "No response was recorded.") {
+          return null;
         }
-        
-        const result = await evaluateAnswer({
+
+        return await evaluateAnswer({
           question: question.question,
           user_answer: userAnswer,
           ideal_answer: question.ideal_answer,
           keywords: question.keywords,
           role: interviewConfig.role,
         });
-        
-        if (result) {
-          console.log(`   ✅ Score: ${result.final_score}% - Grade: ${result.grade}`);
-          console.log(`   📊 Breakdown: Tech=${result.score_breakdown.technical_accuracy}/10, Clarity=${result.score_breakdown.clarity_score}/10`);
-          console.log(`   💪 Strengths: ${result.strengths?.length || 0}, Improvements: ${result.improvements?.length || 0}`);
-        }
-        
-        return result;
       });
-      
+
       const evaluationResults = await Promise.all(evaluationPromises);
-      
-      // Filter out null results and calculate overall stats
-      const validResults = evaluationResults.filter(r => r !== null) as EvaluationResult[];
-      
-      console.log(`\n✅ Evaluation Complete!`);
-      console.log(`   Valid results: ${validResults.length}/${questions.length}`);
-      
-      // Calculate average score (0 if all questions skipped)
-      const avgScore = validResults.length > 0 
-        ? validResults.reduce((sum, r) => sum + r.final_score, 0) / validResults.length 
-        : 0;
-      
-      if (validResults.length > 0) {
-        console.log(`   📈 Average score: ${avgScore.toFixed(1)}%`);
-        console.log(`   📊 Score range: ${Math.min(...validResults.map(r => r.final_score))}% - ${Math.max(...validResults.map(r => r.final_score))}%`);
-      } else {
-        console.log(`   ⚠️ All questions skipped - Score: 0%`);
-      }
-      
-      // Get communication analytics summary
-      const avgMetrics = getAverageMetrics();
-      if (avgMetrics) {
-        console.log(`\n📊 Communication Analytics Summary:`);
-        console.log(`   Average WPM: ${avgMetrics.wordsPerMinute}`);
-        console.log(`   Total filler words: ${avgMetrics.fillerWords.count}`);
-        console.log(`   Average fluency: ${avgMetrics.fluencyScore}%`);
-      }
-      
-      // Navigate to results page with evaluation data - use finalAnswers from ref
-      // Works even if all questions skipped (score will be 0)
-      navigate('/interview-results', {
+      const validResults = evaluationResults.filter((r) => r !== null) as EvaluationResult[];
+
+      const avgScore =
+        validResults.length > 0
+          ? validResults.reduce((sum, r) => sum + r.final_score, 0) / validResults.length
+          : 0;
+
+      navigate("/interview-results", {
         state: {
-          questions: questions,
-          answers: finalAnswers, // Use ref value, not state
+          questions: finalState.questions,
+          answers: finalAnswers,
           evaluations: validResults,
-          overallScore: Math.round(avgScore), // 0 if all skipped
+          overallScore: Math.round(avgScore),
           interviewConfig: interviewConfig,
-          communicationAnalytics: allAnalytics, // Add analytics data
-        }
+          communicationAnalytics: allAnalytics,
+        },
       });
     } catch (error) {
-      console.error('❌ Evaluation error:', error);
-      navigate('/interview-results');
+      console.error("❌ Evaluation error:", error);
+      navigate("/interview-results");
     } finally {
       setIsEvaluatingAll(false);
     }
@@ -664,10 +583,35 @@ export default function LiveInterview() {
 
   const isLowTime = timeRemaining <= 30;
 
+  // Build the list of conversation messages dynamically for the chat layout (Task 3e)
+  const conversationBubbles = [];
+  for (let i = 0; i <= state.currentQuestionIndex; i++) {
+    const qData = state.questions[i];
+    if (qData) {
+      const reactionText =
+        qData.reaction || (i > 0 ? buildReactionFromAnswer(state.answers[i - 1] || "") : "");
+      
+      conversationBubbles.push({
+        id: `q-${i}`,
+        role: "interviewer",
+        text: qData.question,
+        reaction: reactionText,
+      });
+
+      if (state.answers[i] !== undefined) {
+        conversationBubbles.push({
+          id: `a-${i}`,
+          role: "candidate",
+          text: state.answers[i],
+        });
+      }
+    }
+  }
+
   return (
-    <div className="h-screen w-full bg-[#0F172A] flex flex-col">
+    <div className="h-screen w-full bg-[#0e0e11] text-[#f0f0f5] flex flex-col overflow-hidden">
       {/* Top Bar */}
-      <header className="bg-[#1E293B] border-b border-[#334155] px-6 py-3 flex items-center justify-between gap-4 flex-shrink-0">
+      <header className="bg-var(--surface-2) border-b border-var(--glass-border) glass-panel px-6 py-4 flex items-center justify-between gap-4 flex-shrink-0 z-20 rounded-none border-t-0 border-x-0">
         <div className="flex items-center gap-4">
           <button
             onClick={() => {
@@ -676,681 +620,334 @@ export default function LiveInterview() {
               }
               navigate("/dashboard");
             }}
-            className="flex items-center gap-2 text-[#94A3B8] hover:text-white transition-colors"
+            className="flex items-center gap-2 text-[#9090a8] hover:text-white transition-colors"
             style={{ fontFamily: "'Inter', sans-serif", fontWeight: 500, fontSize: "0.875rem" }}
           >
             <ChevronLeft size={16} strokeWidth={2} />
             Exit
           </button>
-
-          <div className="h-6 w-px bg-[#334155]" />
-
-          <div className="flex items-center gap-2">
-            <span
-              style={{
-                fontFamily: "'Montserrat', sans-serif",
-                fontWeight: 700,
-                fontSize: "0.875rem",
-                color: "#FFFFFF",
-              }}
-            >
-              Question {currentQuestion + 1} of {totalQuestions}
-            </span>
-          </div>
+          <div className="h-6 w-px bg-var(--glass-border)" />
+          <span className="font-semibold text-sm tracking-wide">
+            Question {state.currentQuestionIndex + 1} of {totalQuestions}
+          </span>
         </div>
 
         <div className="flex items-center gap-4">
           {/* Timer */}
-          <div className="flex items-center gap-2">
-            <div
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
-              style={{
-                backgroundColor: isLowTime ? "#7F1D1D" : "#1E293B",
-                border: `1px solid ${isLowTime ? "#DC2626" : "#334155"}`,
-              }}
-            >
-              <AlertCircle size={14} className={isLowTime ? "text-[#EF4444]" : "text-[#94A3B8]"} strokeWidth={2} />
-              <span
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontWeight: 600,
-                  fontSize: "0.875rem",
-                  color: isLowTime ? "#FCA5A5" : "#E2E8F0",
-                }}
-              >
-                {formatTime(timeRemaining)}
-              </span>
-            </div>
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all duration-300"
+            style={{
+              backgroundColor: isLowTime ? "rgba(220,38,38,0.15)" : "rgba(255,255,255,0.02)",
+              borderColor: isLowTime ? "rgba(220,38,38,0.4)" : "var(--glass-border)",
+            }}
+          >
+            <AlertCircle size={14} className={isLowTime ? "text-red-400 animate-pulse" : "text-[#9090a8]"} strokeWidth={2} />
+            <span className={`text-sm font-semibold ${isLowTime ? "text-red-400" : "text-white"}`}>
+              {formatTime(timeRemaining)}
+            </span>
           </div>
 
-          {/* Audio toggle */}
+          {/* Sound Toggle */}
           <button
             onClick={() => {
               const newSoundState = !isSoundOn;
               setIsSoundOn(newSoundState);
-              if (!newSoundState) {
-                stopSpeaking(); // Stop TTS when sound is muted
-              }
+              if (!newSoundState) stopSpeaking();
             }}
-            className="w-9 h-9 rounded-lg bg-[#334155] hover:bg-[#475569] flex items-center justify-center transition-colors"
-            title={isSoundOn ? "Mute AI voice" : "Unmute AI voice"}
+            className="w-9 h-9 rounded-xl bg-rgba(255,255,255,0.04) hover:bg-rgba(255,255,255,0.08) flex items-center justify-center transition-colors border border-var(--glass-border)"
           >
             {isSoundOn ? (
-              <Volume2 size={16} className="text-[#E2E8F0]" strokeWidth={2} />
+              <Volume2 size={16} className="text-[#f0f0f5]" />
             ) : (
-              <VolumeX size={16} className="text-[#94A3B8]" strokeWidth={2} />
+              <VolumeX size={16} className="text-[#9090a8]" />
             )}
           </button>
         </div>
       </header>
 
       {/* Progress Bar */}
-      <div className="bg-[#1E293B] px-6 pb-3">
-        <div className="w-full h-1.5 bg-[#334155] rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-[#2563EB] to-[#3B82F6] transition-all duration-500 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+      <div className="w-full h-1 bg-[#1e1e24] relative overflow-hidden flex-shrink-0 z-20">
+        <motion.div
+          className="h-full"
+          style={{
+            background: "linear-gradient(90deg, var(--accent-primary) 0%, var(--accent-secondary) 100%)",
+            boxShadow: "0 0 8px var(--accent-glow)",
+          }}
+          animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.35 }}
+        />
       </div>
 
-      {/* Main Stage */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-6 p-6 overflow-hidden">
-        {/* Question Panel */}
-        <div className="flex-1 flex flex-col bg-[#1E293B] rounded-2xl border border-[#334155] p-8 overflow-y-auto">
-          <div className="flex items-start gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-[#2563EB]/10 flex items-center justify-center flex-shrink-0">
-              <MessageSquare size={18} className="text-[#2563EB]" strokeWidth={2} />
-            </div>
-            <div className="flex-1">
-              <span
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontWeight: 600,
-                  fontSize: "0.75rem",
-                  color: "#94A3B8",
-                  letterSpacing: "0.05em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Interview Question
-              </span>
-              {isSpeaking && (
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="flex gap-1">
-                    <div className="w-1 h-3 bg-[#10B981] rounded-full animate-pulse" style={{ animationDelay: '0s' }} />
-                    <div className="w-1 h-3 bg-[#10B981] rounded-full animate-pulse" style={{ animationDelay: '0.1s' }} />
-                    <div className="w-1 h-3 bg-[#10B981] rounded-full animate-pulse" style={{ animationDelay: '0.2s' }} />
-                  </div>
-                  <span
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.7rem",
-                      color: "#10B981",
-                      fontWeight: 500,
-                    }}
-                  >
-                    AI is speaking...
-                  </span>
-                </div>
-              )}
-            </div>
+      {/* Main Grid Stage — Refactored to 5-col Grid layout for Task 3a */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-6 p-6 overflow-hidden min-h-0 bg-[#0e0e11]">
+        {/* Left Column (col-span-2) — Interviewer Avatar & User Camera Feed */}
+        <div className="lg:col-span-2 flex flex-col gap-6 overflow-y-auto pr-1">
+          {/* Interviewer Avatar component (Task 3b) */}
+          <InterviewerAvatar state={phase} name={interviewerName} voice={selectedVoice} />
+
+          {/* Audio Visualizer underneath avatar when active (Task 3c) */}
+          <div className="glass-panel p-4 flex flex-col items-center justify-center w-full">
+            <span className="text-[10px] text-[#9090a8] font-bold uppercase tracking-wider mb-2">
+              Voice Waveform
+            </span>
+            <AudioVisualizer isActive={phase === "speaking"} color="var(--accent-primary)" />
           </div>
 
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-            {isGenerating || !questions[currentQuestion] ? (
-              questionError ? (
-                <div className="flex flex-col items-center gap-3">
-                  <AlertCircle size={48} className="text-[#EF4444]" strokeWidth={2} />
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '1.125rem',
-                      color: '#EF4444',
-                      fontWeight: 600,
-                    }}
-                  >
-                    Failed to generate question
-                  </p>
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '0.875rem',
-                      color: '#94A3B8',
-                      textAlign: 'center',
-                      maxWidth: '400px',
-                    }}
-                  >
-                    {questionError}
-                  </p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="mt-4 px-6 py-2.5 rounded-xl bg-[#2563EB] text-white hover:bg-[#1D4ED8] transition-colors"
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '0.875rem',
-                      fontWeight: 600,
-                    }}
-                  >
-                    Reload Page
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-12 h-12 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin"></div>
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '1rem',
-                      color: '#94A3B8',
-                      fontWeight: 500,
-                    }}
-                  >
-                    🧠 AI is generating your next question...
-                  </p>
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: '0.75rem',
-                      color: '#64748B',
-                    }}
-                  >
-                    This may take a few seconds...
-                  </p>
-                </div>
-              )
-            ) : (
-              <>
-                {/* AI Interviewer Feedback / Greeting */}
-                {(() => {
-                  const reactionText = questions[currentQuestion].reaction || (currentQuestion > 0 ? buildReactionFromAnswer(answersRef.current[currentQuestion - 1] || '') : '');
-                  if (!reactionText) return null;
-                  return (
-                    <p
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontWeight: 400,
-                        fontSize: "1.05rem",
-                        color: "#94A3B8",
-                        lineHeight: 1.5,
-                        textAlign: "center",
-                        marginBottom: "1rem",
-                        fontStyle: "italic",
-                        backgroundColor: "#0F172A",
-                        padding: "0.75rem 1rem",
-                        borderRadius: "0.75rem",
-                        border: "1px solid #334155",
-                        maxWidth: "600px"
-                      }}
-                    >
-                      "{reactionText}"
-                    </p>
-                  );
-                })()}
-
-                <p
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontWeight: 500,
-                    fontSize: "clamp(1.25rem, 3vw, 1.75rem)",
-                    color: "#F8FAFC",
-                    lineHeight: 1.5,
-                    textAlign: "center",
-                  }}
-                >
-                  {questions[currentQuestion].question}
-                </p>
-                
-                {/* Replay Question Button */}
-                {isSoundOn && (
-                  <button
-                    onClick={() => {
-                      console.log('🎵 Play button clicked - Using Sarvam AI (Kavya voice)');
-                      setHasUserInteracted(true);
-                      // Sarvam AI TTS with Indian voice
-                      speak(questions[currentQuestion].question, { language: 'en-IN', speaker: 'kavya' });
-                    }}
-                    disabled={isSpeaking}
-                    className="px-5 py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:scale-105 active:scale-95"
-                    style={{
-                      backgroundColor: !hasUserInteracted ? '#10B981' : '#334155',
-                      boxShadow: !hasUserInteracted ? '0 4px 20px rgba(16, 185, 129, 0.3)' : 'none',
-                    }}
-                    title={!hasUserInteracted ? "Click to hear question" : "Replay question"}
-                  >
-                    <Volume2 size={16} className={!hasUserInteracted ? "text-white" : "text-[#94A3B8]"} strokeWidth={2} />
-                <span
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.8rem",
-                    color: !hasUserInteracted ? "#FFFFFF" : "#94A3B8",
-                    fontWeight: !hasUserInteracted ? 600 : 500,
-                  }}
-                >
-                  {isSpeaking ? "🎵 Playing..." : !hasUserInteracted ? "🔊 Click to Hear Question" : "🔁 Replay Question"}
-                </span>
-              </button>
-            )}
-              </>
-            )}
-          </div>
-
-          {/* Tips */}
-          <div className="mt-6 p-4 rounded-xl bg-[#0F172A] border border-[#334155]">
-            <p
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontSize: "0.8rem",
-                color: "#94A3B8",
-                lineHeight: 1.6,
-              }}
-            >
-              <span className="text-[#60A5FA] font-semibold">💡 Tip:</span> Use the STAR method (Situation, Task,
-              Action, Result) to structure your answer effectively.
-            </p>
-          </div>
-        </div>
-
-        {/* Camera Panel */}
-        <div className="w-full lg:w-80 flex flex-col gap-4">
-          <div className="relative bg-[#1E293B] rounded-2xl border border-[#334155] overflow-hidden aspect-[3/4] lg:aspect-auto lg:h-80">
+          {/* Camera Feed styled as a clean glass panel */}
+          <div className="relative rounded-2xl border border-var(--glass-border) glass-panel overflow-hidden bg-black/40 aspect-video w-full">
             {cameraPermission === "denied" ? (
-              <div className="absolute inset-0 bg-[#0F172A] flex items-center justify-center p-6">
-                <div className="text-center">
-                  <AlertCircle size={40} className="text-[#EF4444] mx-auto mb-3" strokeWidth={1.5} />
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "#E2E8F0",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    Camera Access Denied
-                  </p>
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.75rem",
-                      color: "#64748B",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    Please allow camera access in your browser settings
-                  </p>
+              <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+                <div>
+                  <AlertCircle size={32} className="text-red-500 mx-auto mb-2" />
+                  <p className="text-xs text-[#9090a8]">Camera permission denied</p>
                 </div>
               </div>
             ) : (
               <>
-                {/* Video Feed */}
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="w-full h-full object-cover transition-opacity duration-300"
                   style={{ transform: "scaleX(-1)", display: isCameraOn ? "block" : "none" }}
                 />
-
-                {/* Camera Off Overlay */}
                 {!isCameraOn && (
-                  <div className="absolute inset-0 bg-[#0F172A] flex items-center justify-center">
-                    <div className="text-center">
-                      <CameraOff size={40} className="text-[#475569] mx-auto mb-2" strokeWidth={1.5} />
-                      <p
-                        style={{
-                          fontFamily: "'Inter', sans-serif",
-                          fontSize: "0.875rem",
-                          color: "#64748B",
-                        }}
-                      >
-                        Camera Off
-                      </p>
-                    </div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-[#16161a]">
+                    <CameraOff size={32} className="text-[#475569]" />
                   </div>
                 )}
-
-                {/* Recording indicator */}
-                {isRecording && (
-                  <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#7F1D1D] border border-[#DC2626]">
-                    <div
-                      className="w-2 h-2 rounded-full bg-[#EF4444]"
-                      style={{
-                        animation: "pulse 1.5s ease-in-out infinite",
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontWeight: 600,
-                        fontSize: "0.75rem",
-                        color: "#FCA5A5",
-                      }}
-                    >
-                      Recording
-                    </span>
-                  </div>
-                )}
-
-                {/* Camera toggle */}
+                {/* Camera Toggle Button */}
                 <button
                   onClick={toggleCamera}
-                  className="absolute bottom-4 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-[#334155] hover:bg-[#475569] flex items-center justify-center transition-colors"
+                  className="absolute bottom-3 right-3 w-8 h-8 rounded-xl bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors text-white z-10 border border-white/10"
                 >
-                  {isCameraOn ? (
-                    <Camera size={16} className="text-[#E2E8F0]" strokeWidth={2} />
-                  ) : (
-                    <CameraOff size={16} className="text-[#94A3B8]" strokeWidth={2} />
-                  )}
+                  {isCameraOn ? <Camera size={14} /> : <CameraOff size={14} />}
                 </button>
               </>
             )}
           </div>
-
-          {/* Audio Waveform Visualization */}
-          {inputMode === "voice" && (
-            <div className="bg-[#1E293B] rounded-xl border border-[#334155] p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Activity size={14} className="text-[#60A5FA]" strokeWidth={2} />
-                <span
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.75rem",
-                    color: "#94A3B8",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                  }}
-                >
-                  Audio Level
-                </span>
-              </div>
-              <canvas ref={canvasRef} width={280} height={60} className="w-full h-15 rounded" />
-            </div>
-          )}
-
-          {/* Quick skip */}
-          <button
-            onClick={handleNext}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#334155] hover:bg-[#475569] border border-[#475569] transition-colors"
-            style={{
-              fontFamily: "'Inter', sans-serif",
-              fontWeight: 500,
-              fontSize: "0.875rem",
-              color: "#94A3B8",
-            }}
-          >
-            <SkipForward size={14} strokeWidth={2} />
-            Skip Question
-          </button>
         </div>
-      </div>
 
-      {/* Input Controls */}
-      <div className="bg-[#1E293B] border-t border-[#334155] px-6 py-5 flex-shrink-0">
-        <div className="max-w-4xl mx-auto flex flex-col gap-4">
-          {/* Mode Toggle */}
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={() => {
-                if (isRecording) stopRecording();
-                resetTranscript();
-                setInputMode("voice");
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-150"
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontWeight: 600,
-                fontSize: "0.875rem",
-                backgroundColor: inputMode === "voice" ? "#2563EB" : "#334155",
-                color: inputMode === "voice" ? "#FFFFFF" : "#94A3B8",
-              }}
-            >
-              <Mic size={14} strokeWidth={2} />
-              Voice Answer
-            </button>
-            <button
-              onClick={() => {
-                if (isRecording) stopRecording();
-                resetTranscript();
-                setInputMode("text");
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-150"
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontWeight: 600,
-                fontSize: "0.875rem",
-                backgroundColor: inputMode === "text" ? "#2563EB" : "#334155",
-                color: inputMode === "text" ? "#FFFFFF" : "#94A3B8",
-              }}
-            >
-              <MessageSquare size={14} strokeWidth={2} />
-              Type Answer
-            </button>
+        {/* Right Column (col-span-3) — Message Feed & Scroll area + User inputs */}
+        <div className="lg:col-span-3 flex flex-col bg-var(--surface-2) rounded-2xl border border-var(--glass-border) glass-panel overflow-hidden min-h-0">
+          
+          {/* Scrollable Conversation Transcript Log (Task 3e) */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
+            {isGenerating && state.questions.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-var(--accent-primary) animate-spin" />
+                <p className="text-sm text-[#9090a8]">Starting interview session...</p>
+              </div>
+            ) : (
+              <AnimatePresence initial={false}>
+                {conversationBubbles.map((msg) => {
+                  const isInterviewer = msg.role === "interviewer";
+                  return (
+                    <motion.div
+                      key={msg.id}
+                      initial={{ opacity: 0, x: isInterviewer ? -12 : 12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className={`flex flex-col max-w-[85%] ${
+                        isInterviewer ? "mr-auto items-start" : "ml-auto items-end"
+                      }`}
+                    >
+                      {/* Name label */}
+                      <span className="text-[10px] text-[#9090a8] uppercase tracking-wider mb-1 font-bold">
+                        {isInterviewer ? interviewerName : "You"}
+                      </span>
+                      
+                      {/* Message Bubble styling as specified in Task 3e */}
+                      <div
+                        className={`p-4 rounded-2xl text-sm leading-relaxed border ${
+                          isInterviewer
+                            ? "glass-panel bg-white/[0.02] border-white/5 text-[#f0f0f5]"
+                            : "bg-[#6C5CE7]/15 border-[#6C5CE7]/30 text-[#f0f0f5]"
+                        }`}
+                      >
+                        {isInterviewer && msg.reaction && (
+                          <span className="block text-xs text-var(--accent-secondary) italic mb-2 font-medium">
+                            "{msg.reaction}"
+                          </span>
+                        )}
+                        <span>{msg.text}</span>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
-          {inputMode === "voice" ? (
+          {/* User Controls Panel */}
+          <div className="bg-white/[0.01] border-t border-var(--glass-border) p-5 flex-shrink-0">
             <div className="flex flex-col gap-4">
-              {/* Voice Error Display */}
-              {voiceError && (
-                <div className="px-4 py-3 bg-[#7F1D1D] border border-[#DC2626] rounded-xl">
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "#FCA5A5",
-                    }}
-                  >
-                    ⚠️ {voiceError}
-                  </p>
-                </div>
-              )}
+              
+              {/* Input Mode Toggles */}
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  onClick={() => {
+                    if (isRecording) stopRecording();
+                    resetTranscript();
+                    setInputMode("voice");
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all text-xs font-bold uppercase tracking-wider border ${
+                    inputMode === "voice"
+                      ? "bg-var(--accent-primary) text-white border-var(--accent-primary) shadow-[0_4px_12px_var(--accent-glow)]"
+                      : "bg-[#1e1e24] text-[#9090a8] border-transparent hover:border-var(--glass-border)"
+                  }`}
+                >
+                  <Mic size={12} />
+                  Voice
+                </button>
+                <button
+                  onClick={() => {
+                    if (isRecording) stopRecording();
+                    resetTranscript();
+                    setInputMode("text");
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all text-xs font-bold uppercase tracking-wider border ${
+                    inputMode === "text"
+                      ? "bg-var(--accent-primary) text-white border-var(--accent-primary) shadow-[0_4px_12px_var(--accent-glow)]"
+                      : "bg-[#1e1e24] text-[#9090a8] border-transparent hover:border-var(--glass-border)"
+                  }`}
+                >
+                  <MessageSquare size={12} />
+                  Text
+                </button>
+              </div>
 
-              {/* Status Messages */}
-              {isWhisperRecording && !transcript && (
-                <div className="px-4 py-3 bg-[#1E3A8A] border border-[#3B82F6] rounded-xl">
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "#93C5FD",
-                      textAlign: "center",
-                    }}
-                  >
-                    🎤 Recording... Speak clearly at normal volume
-                  </p>
-                </div>
-              )}
+              {/* Dynamic Action Inputs */}
+              {inputMode === "voice" ? (
+                <div className="flex flex-col gap-4">
+                  {/* Realtime voice indicators */}
+                  {voiceError && (
+                    <div className="p-3 bg-red-950/30 border border-red-800/40 rounded-xl text-red-400 text-xs flex items-center gap-2 animate-shake">
+                      <AlertCircle size={14} />
+                      <span>{voiceError}</span>
+                    </div>
+                  )}
 
-              {/* Transcript Display */}
-              {transcript && (
-                <div className="px-4 py-3 bg-[#0F172A] border border-[#10B981] rounded-xl min-h-[100px] max-h-[200px] overflow-y-auto">
-                  <div className="flex items-start gap-2 mb-2">
-                    <Activity size={14} className="text-[#10B981] mt-0.5 flex-shrink-0" strokeWidth={2} />
-                    <span
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        color: "#10B981",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
+                  {/* Transcript box when recording/recorded */}
+                  {transcript && (
+                    <div className="p-4 bg-black/30 border border-var(--glass-border) rounded-xl max-h-24 overflow-y-auto">
+                      <p className="text-xs text-[#9090a8] font-bold uppercase tracking-wider mb-1">
+                        Speech Output (Live Preview)
+                      </p>
+                      <p className="text-sm text-gray-300">{transcript}</p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-4">
+                    {/* Secondary Actions */}
+                    <button
+                      onClick={handleNext}
+                      className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[#1e1e24] hover:bg-[#25252e] text-[#9090a8] hover:text-white transition-colors border border-var(--glass-border) text-xs font-bold uppercase tracking-wider"
                     >
-                      Your Answer:
-                    </span>
+                      <SkipForward size={14} />
+                      Skip
+                    </button>
+
+                    {/* Microphone Action Button (Task 3d) */}
+                    <div className="flex items-center gap-3">
+                      {phase === "thinking" ? (
+                        // Loader Spinner for Thinking State
+                        <button
+                          disabled
+                          className="w-16 h-16 rounded-full flex items-center justify-center bg-[#1e1e24] border border-var(--glass-border) cursor-not-allowed opacity-60"
+                        >
+                          <Loader2 className="w-6 h-6 text-var(--accent-primary) animate-spin" />
+                        </button>
+                      ) : (
+                        // Interactive recording button
+                        <motion.button
+                          onClick={toggleRecording}
+                          disabled={isSpeaking || isGenerating}
+                          className="w-16 h-16 rounded-full flex items-center justify-center relative text-white border-4 border-transparent outline-none focus:outline-none"
+                          style={{
+                            backgroundColor: isRecording ? "#DC2626" : "var(--accent-primary)",
+                          }}
+                          animate={
+                            isRecording
+                              ? {
+                                  scale: [1, 1.06, 1],
+                                  borderColor: ["var(--accent-primary)", "var(--accent-secondary)", "var(--accent-primary)"],
+                                }
+                              : { scale: 1, borderColor: "transparent" }
+                          }
+                          transition={{
+                            duration: 1.2,
+                            repeat: isRecording ? Infinity : 0,
+                            ease: "easeInOut",
+                          }}
+                        >
+                          {isRecording ? <MicOff size={22} /> : <Mic size={22} />}
+                          {isRecording && (
+                            <span className="absolute inset-0 rounded-full border-2 border-white animate-ping opacity-25" />
+                          )}
+                        </motion.button>
+                      )}
+
+                      {/* Micro Audio visualizer next to mic when listening (Task 3c) */}
+                      {phase === "listening" && (
+                        <div className="w-24">
+                          <AudioVisualizer isActive={true} color="var(--accent-secondary)" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Submit Answer */}
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!transcript.trim() || phase === "thinking"}
+                      className="px-5 py-3 rounded-xl transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_4px_12px_rgba(16,185,129,0.2)] disabled:shadow-none"
+                    >
+                      Submit
+                    </button>
                   </div>
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      color: "#E2E8F0",
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {transcript}
-                  </p>
                 </div>
-              )}
-
-              <div className="flex items-center justify-center gap-4">
-                <button
-                  onClick={toggleRecording}
-                  className="w-16 h-16 rounded-full flex items-center justify-center transition-all duration-150 relative"
-                  style={{
-                    backgroundColor: isRecording ? "#DC2626" : "#2563EB",
-                    boxShadow: isRecording
-                      ? `0 0 0 ${4 + audioLevel / 10}px rgba(220, 38, 38, 0.2), 0 8px 32px rgba(220, 38, 38, 0.4)`
-                      : "0 0 0 4px rgba(37, 99, 235, 0.2), 0 8px 32px rgba(37, 99, 235, 0.4)",
-                    transform: isRecording ? `scale(${1 + audioLevel / 1000})` : "scale(1)",
-                  }}
-                  title={isRecording ? "Click to stop recording" : "Click to start speaking"}
-                >
-                  {isRecording ? (
-                    <MicOff size={24} className="text-white" strokeWidth={2} />
-                  ) : (
-                    <Mic size={24} className="text-white" strokeWidth={2} />
-                  )}
-                  
-                  {/* Pulsing ring when recording */}
-                  {isRecording && (
-                    <div 
-                      className="absolute inset-0 rounded-full border-2 border-white animate-ping"
-                      style={{ opacity: 0.3 }}
-                    />
-                  )}
-                </button>
-                
-                <div className="flex-1 max-w-md">
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.875rem",
-                      fontWeight: isRecording ? 600 : 500,
-                      color: isRecording ? "#FCA5A5" : "#94A3B8",
-                      textAlign: "center",
-                    }}
-                  >
-                    {isRecording 
-                      ? "🎤 Recording... Speak clearly at normal volume" 
-                      : "Click the microphone and speak your answer"}
-                  </p>
-                  {isRecording && (
-                    <p
-                      style={{
-                        fontFamily: "'Inter', sans-serif",
-                        fontSize: "0.75rem",
-                        color: "#64748B",
-                        textAlign: "center",
-                        marginTop: "4px",
-                      }}
+              ) : (
+                <div className="flex gap-3 items-end">
+                  <textarea
+                    value={textAnswer}
+                    onChange={(e) => setTextAnswer(e.target.value)}
+                    placeholder="Type your answer here..."
+                    rows={3}
+                    className="flex-1 px-4 py-3 bg-[#0e0e11] border border-var(--glass-border) focus:border-var(--accent-primary) rounded-xl text-[#f0f0f5] placeholder-[#9090a8] outline-none transition-colors resize-none text-sm"
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={handleNext}
+                      className="px-4 py-2 bg-[#1e1e24] hover:bg-[#25252e] text-[#9090a8] hover:text-white border border-var(--glass-border) rounded-xl text-xs font-bold uppercase tracking-wider transition-colors"
                     >
-                      💡 Tip: Speak continuously, the system will pick up your words
-                    </p>
-                  )}
-                </div>
-                
-                <button
-                  onClick={handleSubmit}
-                  disabled={!transcript.trim() || isEvaluating || isConversing}
-                  className="px-6 py-3 rounded-xl transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontWeight: 700,
-                    fontSize: "0.875rem",
-                    backgroundColor: "#10B981",
-                    color: "#FFFFFF",
-                    boxShadow: transcript.trim() && !isEvaluating && !isConversing ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
-                  }}
-                >
-                  {isConversing ? "Analyzing..." : isEvaluating ? "Evaluating..." : "Submit & Next"}
-                </button>
-              </div>
-
-              {/* Help text */}
-              {!transcript && !isRecording && (
-                <div className="text-center">
-                  <p
-                    style={{
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: "0.75rem",
-                      color: "#64748B",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    ℹ️ Make sure your browser has microphone permission enabled.
-                    <br />
-                    Speak at normal volume - no need to shout or get too close to the mic.
-                  </p>
+                      Skip
+                    </button>
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!textAnswer.trim() || phase === "thinking"}
+                      className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-bold uppercase tracking-wider text-white shadow-[0_4px_12px_rgba(16,185,129,0.2)] disabled:shadow-none transition-all"
+                    >
+                      Submit
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
-          ) : (
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <textarea
-                  value={textAnswer}
-                  onChange={(e) => setTextAnswer(e.target.value)}
-                  placeholder="Type your answer here..."
-                  rows={4}
-                  className="w-full px-4 py-3 bg-[#0F172A] border border-[#334155] rounded-xl text-[#E2E8F0] placeholder-[#64748B] outline-none focus:border-[#2563EB] transition-colors resize-none"
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.875rem",
-                    lineHeight: 1.6,
-                  }}
-                />
-              </div>
-              <button
-                onClick={handleSubmit}
-                disabled={!textAnswer.trim() || isEvaluating || isConversing}
-                className="px-6 py-3 rounded-xl transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed self-end"
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontWeight: 700,
-                  fontSize: "0.875rem",
-                  backgroundColor: "#10B981",
-                  color: "#FFFFFF",
-                  boxShadow: textAnswer.trim() && !isEvaluating && !isConversing ? "0 4px 20px rgba(16, 185, 129, 0.3)" : "none",
-                }}
-              >
-                {isConversing ? "Analyzing..." : isEvaluating ? "Evaluating..." : "Submit & Next"}
-              </button>
-            </div>
-          )}
+          </div>
         </div>
       </div>
 
       {/* Loading Overlay for Final Evaluation */}
       {isEvaluatingAll && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-[#1E293B] rounded-2xl border border-[#334155] p-8 text-center max-w-md">
-            <div className="w-16 h-16 border-4 border-[#2563EB] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontSize: '1.25rem',
-                color: '#F8FAFC',
-                fontWeight: 600,
-              }}
-            >
-              Evaluating Your Interview
+        <div className="fixed inset-0 bg-black/80 backdrop-filter backdrop-blur-md flex items-center justify-center z-50">
+          <div className="bg-var(--surface-2) rounded-2xl border border-var(--glass-border) p-8 text-center max-w-sm glass-panel shadow-2xl">
+            <Loader2 className="w-12 h-12 text-var(--accent-primary) animate-spin mx-auto mb-4" />
+            <h3 className="text-lg font-bold text-white mb-2">Analyzing Interview</h3>
+            <p className="text-xs text-[#9090a8] leading-relaxed">
+              Evaluating transcripts and computing final communications metrics. Please wait...
             </p>
-            <p
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontSize: '0.875rem',
-                color: '#94A3B8',
-                marginTop: '8px',
-              }}
-            >
-              AI is analyzing all your responses and generating comprehensive feedback...
-            </p>
-            <div className="mt-4 flex items-center justify-center gap-2 text-sm text-[#64748B]">
-              <div className="w-2 h-2 bg-[#2563EB] rounded-full animate-pulse"></div>
-              <div className="w-2 h-2 bg-[#2563EB] rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
-              <div className="w-2 h-2 bg-[#2563EB] rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
-            </div>
           </div>
         </div>
       )}

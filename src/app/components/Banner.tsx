@@ -10,16 +10,16 @@ export function Banner() {
   ];
 
   return (
-    <section className="bg-gradient-to-r from-[#EFF6FF] via-[#DBEAFE] to-[#EFF6FF] border-y border-[#BFDBFE] py-16 lg:py-20 relative overflow-hidden">
+    <section className="bg-gradient-to-r from-surface-2/60 via-surface-3/80 to-surface-2/60 border-y border-glass-border py-16 lg:py-20 relative overflow-hidden">
       {/* Decorative elements */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-64 h-64 rounded-full bg-[#2563EB]/5 blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-64 h-64 rounded-full bg-[#2563EB]/8 blur-3xl" />
+        <div className="absolute top-0 left-1/4 w-64 h-64 rounded-full bg-primary/5 blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-64 h-64 rounded-full bg-primary/8 blur-3xl" />
         {/* Grid pattern overlay */}
         <div
           className="absolute inset-0 opacity-[0.04]"
           style={{
-            backgroundImage: `radial-gradient(circle, #2563EB 1px, transparent 1px)`,
+            backgroundImage: `radial-gradient(circle, var(--accent-primary) 1px, transparent 1px)`,
             backgroundSize: "24px 24px",
           }}
         />
@@ -32,7 +32,7 @@ export function Banner() {
           whileInView={{ scale: 1 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5, type: "spring" }}
-          className="w-12 h-12 rounded-xl bg-[#2563EB] flex items-center justify-center shadow-lg shadow-blue-200"
+          className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-purple-500/20"
         >
           <Zap size={22} className="text-white fill-white" />
         </motion.div>
@@ -52,11 +52,11 @@ export function Banner() {
               fontSize: "clamp(1.75rem, 4vw, 2.75rem)",
               lineHeight: 1.2,
               letterSpacing: "-0.025em",
-              color: "#1E293B",
+              color: "var(--text-primary)",
             }}
           >
             Interview Coming Up?{" "}
-            <span className="text-[#2563EB]">Feeling Unprepared?</span>
+            <span className="text-secondary font-bold">Feeling Unprepared?</span>
           </h2>
 
           <p
@@ -65,7 +65,7 @@ export function Banner() {
               fontWeight: 400,
               fontSize: "1.0625rem",
               lineHeight: 1.7,
-              color: "#475569",
+              color: "var(--text-secondary)",
             }}
             className="max-w-xl mx-auto"
           >
@@ -85,11 +85,11 @@ export function Banner() {
               className="flex flex-col items-center gap-1"
             >
               <span
-                style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 800, fontSize: "1.5rem", color: "#2563EB" }}
+                style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 800, fontSize: "1.5rem", color: "var(--accent-secondary)" }}
               >
                 <AnimatedCounter value={stat.value} />
               </span>
-              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.8rem", color: "#64748B" }}>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                 {stat.label}
               </span>
             </motion.div>
@@ -105,7 +105,7 @@ export function Banner() {
           whileHover={{ scale: 1.05, y: -2 }}
           transition={{ duration: 0.3 }}
           style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600 }}
-          className="flex items-center gap-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-8 py-3.5 rounded-xl shadow-lg shadow-blue-200 hover:shadow-blue-300 text-sm group"
+          className="flex items-center gap-2.5 bg-primary hover:bg-primary/95 text-white px-8 py-3.5 rounded-xl shadow-lg shadow-purple-500/20 text-sm group"
         >
           Try AI Mock Interview!
           <motion.div
@@ -117,7 +117,7 @@ export function Banner() {
         </motion.a>
 
         {/* Fine print */}
-        <p style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.75rem", color: "#94A3B8" }}>
+        <p style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
           No credit card required · Free to start · Cancel anytime
         </p>
       </div>

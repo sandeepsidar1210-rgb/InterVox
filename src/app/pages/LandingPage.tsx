@@ -18,7 +18,7 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white relative w-full" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="min-h-screen bg-background text-foreground relative w-full" style={{ fontFamily: "'Inter', sans-serif" }}>
       <GlobalBackground />
       <CursorGlow />
       <Navbar />

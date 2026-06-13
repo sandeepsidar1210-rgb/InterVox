@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { motion } from "motion/react";
+import { motion } from "framer-motion";
 import {
   Play,
   Sparkles,
@@ -18,6 +18,7 @@ import { InterviewSetupModal } from "../components/dashboard/InterviewSetupModal
 import { NotificationDropdown } from "../components/dashboard/NotificationDropdown";
 import { useNavigate } from "react-router";
 import { getInterviewHistory, getHistoryStats, type InterviewSession } from "../../utils/interviewStorage";
+import { useCountUp } from "../../hooks/useCountUp";
 
 const quickRoles = [
   { label: "Software Engineer", icon: "💻", color: "#EFF6FF", text: "#2563EB" },
@@ -130,16 +131,48 @@ export default function DashboardHome() {
       console.log(`📊 Loaded ${formattedSessions.length} recent sessions`);
     };
     
-    loadRecentSessions();
+    loadRecentSessions();  // Framer Motion variants
   }, []);
+
+  const containerVariants = {
+    hidden: {},
+    show: {
+      transition: {
+        staggerChildren: 0.08
+      }
+    }
+  };
+
+  const cardVariants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } }
+  };
+
+  const listVariants = {
+    hidden: {},
+    show: {
+      transition: {
+        staggerChildren: 0.05
+      }
+    }
+  };
+
+  const rowVariants = {
+    hidden: { opacity: 0, x: -16 },
+    show: { opacity: 1, x: 0, transition: { duration: 0.35, ease: "easeOut" } }
+  };
+
+  const avgScoreCount = useCountUp(stats.averageScore || 0);
+  const bestScoreCount = useCountUp(stats.bestScore || 0);
+  const totalSessionsCount = useCountUp(stats.totalSessions || 0);
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto bg-[#F9FAFB]">
+      <div className="flex-1 overflow-y-auto bg-[#0e0e11] text-[#f0f0f5]">
         {/* Top Bar */}
-        <header className="bg-white border-b border-[#E2E8F0] sticky top-0 z-30 px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
+        <header className="bg-var(--surface-2) border-b border-var(--glass-border) sticky top-0 z-30 px-6 lg:px-8 py-4 flex items-center justify-between gap-4 glass-panel rounded-none border-t-0 border-x-0">
           <div className="flex flex-col">
-            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.75rem", color: "#94A3B8" }}>
+            <span className="text-[10px] text-[#9090a8] uppercase font-bold tracking-wider">
               {today}
             </span>
             <h1
@@ -147,7 +180,7 @@ export default function DashboardHome() {
                 fontFamily: "'Montserrat', sans-serif",
                 fontWeight: 800,
                 fontSize: "1.2rem",
-                color: "#1E293B",
+                color: "#FFFFFF",
                 letterSpacing: "-0.02em",
                 lineHeight: 1.3,
               }}
@@ -158,12 +191,12 @@ export default function DashboardHome() {
 
           <div className="flex items-center gap-3">
             {/* Search */}
-            <div className="hidden md:flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl px-3 py-2 w-56">
-              <Search size={14} strokeWidth={2} className="text-[#94A3B8] flex-shrink-0" />
+            <div className="hidden md:flex items-center gap-2 bg-white/[0.02] border border-var(--glass-border) rounded-xl px-3 py-2 w-56">
+              <Search size={14} strokeWidth={2} className="text-[#9090a8] flex-shrink-0" />
               <input
                 type="text"
                 placeholder="Search sessions…"
-                className="bg-transparent outline-none flex-1 text-sm text-[#1E293B] placeholder-[#94A3B8]"
+                className="bg-transparent outline-none flex-1 text-sm text-[#f0f0f5] placeholder-[#9090a8]"
                 style={{ fontFamily: "'Inter', sans-serif" }}
               />
             </div>
@@ -175,7 +208,7 @@ export default function DashboardHome() {
             <img
               src="https://images.unsplash.com/photo-1740174459726-8c57d8366061?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&w=80"
               alt="User"
-              className="w-9 h-9 rounded-xl object-cover border-2 border-[#E2E8F0] cursor-pointer"
+              className="w-9 h-9 rounded-xl object-cover border border-var(--glass-border) cursor-pointer hover:opacity-85 transition-opacity"
               onClick={() => navigate("/profile")}
             />
           </div>
@@ -187,8 +220,8 @@ export default function DashboardHome() {
           {/* Hero Start CTA + Streak */}
           <div className="grid grid-cols-1 gap-4">
             {/* Main CTA card */}
-            <div className="relative bg-gradient-to-br from-[#2563EB] to-[#1D4ED8] rounded-2xl p-7 overflow-hidden flex flex-col justify-between gap-6"
-              style={{ boxShadow: "0 8px 32px rgba(37,99,235,0.3)" }}>
+            <div className="relative bg-gradient-to-br from-[#6C5CE7] to-[#1D4ED8] rounded-2xl p-7 overflow-hidden flex flex-col justify-between gap-6"
+              style={{ boxShadow: "0 8px 32px var(--accent-glow)" }}>
               {/* Decorative circles */}
               <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5" />
               <div className="absolute -bottom-6 -right-4 w-24 h-24 rounded-full bg-white/5" />
@@ -223,7 +256,7 @@ export default function DashboardHome() {
 
               <button
                 onClick={() => setShowModal(true)}
-                className="relative flex items-center gap-2.5 bg-white hover:bg-blue-50 text-[#2563EB] w-fit px-6 py-3 rounded-xl transition-all duration-150 hover:-translate-y-0.5"
+                className="relative flex items-center gap-2.5 bg-white hover:bg-blue-50 text-[#6C5CE7] w-fit px-6 py-3 rounded-xl transition-all duration-150 hover:-translate-y-0.5"
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontWeight: 700,
@@ -231,7 +264,7 @@ export default function DashboardHome() {
                   boxShadow: "0 4px 14px rgba(0,0,0,0.15)",
                 }}
               >
-                <Play size={14} strokeWidth={2.5} className="fill-[#2563EB]" />
+                <Play size={14} strokeWidth={2.5} className="fill-[#6C5CE7]" />
                 Start New Interview
                 <ArrowRight size={14} strokeWidth={2.5} />
               </button>
@@ -241,12 +274,12 @@ export default function DashboardHome() {
           {/* Quick Start by Role */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#1E293B" }}>
+              <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#FFFFFF" }}>
                 Quick Start by Role
               </h3>
               <button
                 onClick={() => navigate("/dashboard/practice")}
-                className="flex items-center gap-1 text-[#2563EB] hover:underline"
+                className="flex items-center gap-1 text-[#6C5CE7] hover:underline"
                 style={{ fontFamily: "'Inter', sans-serif", fontWeight: 500, fontSize: "0.8rem" }}
               >
                 See all roles <ChevronRight size={14} />
@@ -257,14 +290,12 @@ export default function DashboardHome() {
                 <button
                   key={r.label}
                   onClick={() => setShowModal(true)}
-                  className="flex flex-col items-center gap-2.5 py-5 px-3 rounded-2xl border border-[#E2E8F0] bg-white hover:border-current hover:shadow-md transition-all duration-150 group"
-                  style={{ borderColor: "#E2E8F0" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = r.text)}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#E2E8F0")}
+                  className="flex flex-col items-center gap-2.5 py-5 px-3 rounded-2xl border border-var(--glass-border) bg-white/[0.01] hover:border-[#6C5CE7] hover:shadow-md transition-all duration-150 group"
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#6C5CE7")}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--glass-border)")}
                 >
                   <div
-                    className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-                    style={{ backgroundColor: r.color }}
+                    className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl bg-white/5"
                   >
                     {r.icon}
                   </div>
@@ -273,7 +304,7 @@ export default function DashboardHome() {
                       fontFamily: "'Inter', sans-serif",
                       fontWeight: 600,
                       fontSize: "0.78rem",
-                      color: "#475569",
+                      color: "#9090a8",
                       textAlign: "center",
                       lineHeight: 1.4,
                     }}
@@ -285,30 +316,36 @@ export default function DashboardHome() {
             </div>
           </div>
 
-          {/* Performance Overview - Quick Stats */}
+          {/* Performance Overview - Quick Stats (Staggered Animation Task 4) */}
           {stats.totalSessions > 0 && (
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#1E293B" }}>
+                <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#FFFFFF" }}>
                   Performance Overview
                 </h3>
                 <button
                   onClick={() => navigate("/dashboard/analytics")}
-                  className="flex items-center gap-1 text-[#2563EB] hover:underline"
+                  className="flex items-center gap-1 text-[#6C5CE7] hover:underline"
                   style={{ fontFamily: "'Inter', sans-serif", fontWeight: 500, fontSize: "0.8rem" }}
                 >
                   View Analytics <ChevronRight size={14} />
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+              <motion.div
+                variants={containerVariants}
+                initial="hidden"
+                animate="show"
+                className="grid grid-cols-1 md:grid-cols-3 gap-4"
+              >
                 {/* Average Score */}
-                <div
-                  className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                  style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                <motion.div
+                  variants={cardVariants}
+                  className="glass-panel p-5 bg-var(--surface-2) border-var(--glass-border) shadow-lg"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#EFF6FF] flex items-center justify-center">
-                      <Award size={18} className="text-[#2563EB]" strokeWidth={2} />
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                      <Award size={18} className="text-[#6C5CE7]" strokeWidth={2} />
                     </div>
                   </div>
                   <p
@@ -316,32 +353,32 @@ export default function DashboardHome() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "#FFFFFF",
                       lineHeight: 1,
                     }}
                   >
-                    {stats.averageScore}%
+                    {avgScoreCount}%
                   </p>
                   <p
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.75rem",
-                      color: "#94A3B8",
+                      color: "#9090a8",
                       marginTop: "4px",
                     }}
                   >
                     Average Score
                   </p>
-                </div>
+                </motion.div>
 
                 {/* Best Score */}
-                <div
-                  className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                  style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                <motion.div
+                  variants={cardVariants}
+                  className="glass-panel p-5 bg-var(--surface-2) border-var(--glass-border) shadow-lg"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#F0FDF4] flex items-center justify-center">
-                      <TrendingUp size={18} className="text-[#10B981]" strokeWidth={2} />
+                    <div className="w-10 h-10 rounded-xl bg-teal-500/10 flex items-center justify-center">
+                      <TrendingUp size={18} className="text-[#00CEC9]" strokeWidth={2} />
                     </div>
                   </div>
                   <p
@@ -349,36 +386,36 @@ export default function DashboardHome() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "#FFFFFF",
                       lineHeight: 1,
                     }}
                   >
-                    {stats.bestScore}%
+                    {bestScoreCount}%
                   </p>
                   <p
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.75rem",
-                      color: "#94A3B8",
+                      color: "#9090a8",
                       marginTop: "4px",
                     }}
                   >
                     Best Performance
                   </p>
-                </div>
+                </motion.div>
 
-                {/* Trend */}
-                <div
-                  className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                  style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                {/* Total Interviews */}
+                <motion.div
+                  variants={cardVariants}
+                  className="glass-panel p-5 bg-var(--surface-2) border-var(--glass-border) shadow-lg"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-[#F5F3FF] flex items-center justify-center">
-                      <BarChart3 size={18} className="text-[#7C3AED]" strokeWidth={2} />
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                      <BarChart3 size={18} className="text-[#6C5CE7]" strokeWidth={2} />
                     </div>
                     {stats.recentTrend !== 0 && (
                       <span
-                        className="text-xs font-bold"
+                        className="text-xs font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10"
                         style={{
                           color: stats.recentTrend > 0 ? "#10B981" : "#EF4444",
                         }}
@@ -393,124 +430,131 @@ export default function DashboardHome() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "#FFFFFF",
                       lineHeight: 1,
                     }}
                   >
-                    {stats.totalSessions}
+                    {totalSessionsCount}
                   </p>
                   <p
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.75rem",
-                      color: "#94A3B8",
+                      color: "#9090a8",
                       marginTop: "4px",
                     }}
                   >
                     Total Interviews
                   </p>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
             </div>
           )}
 
-          {/* Recent Sessions */}
+          {/* Recent Sessions (Staggered Slide-In Rows Task 4) */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#1E293B" }}>
+              <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1rem", color: "#FFFFFF" }}>
                 Recent Sessions
               </h3>
               <button
                 onClick={() => navigate("/dashboard/history")}
-                className="flex items-center gap-1 text-[#2563EB] hover:underline"
+                className="flex items-center gap-1 text-[#6C5CE7] hover:underline"
                 style={{ fontFamily: "'Inter', sans-serif", fontWeight: 500, fontSize: "0.8rem" }}
               >
                 View history <ChevronRight size={14} />
               </button>
             </div>
 
-            <div className="bg-white rounded-2xl border border-[#E2E8F0] overflow-hidden"
-              style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}>
+            <div className="glass-panel bg-var(--surface-2) border-var(--glass-border) overflow-hidden shadow-xl">
               {recentSessions.length === 0 ? (
                 <div className="px-5 py-8 text-center">
-                  <p style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.875rem", color: "#94A3B8" }}>
+                  <p style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.875rem", color: "#9090a8" }}>
                     No recent interviews yet. Start your first interview!
                   </p>
                   <button
                     onClick={() => setShowModal(true)}
-                    className="mt-4 px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition-colors"
+                    className="mt-4 px-4 py-2 rounded-xl bg-[#6C5CE7] hover:bg-[#5b4cc4] text-white transition-colors"
                     style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: "0.875rem" }}
                   >
                     Start New Interview
                   </button>
                 </div>
               ) : (
-                recentSessions.map((session, idx) => (
-                  <div
-                    key={session.id || idx}
-                    onClick={() => {
-                      if (session.fullData) {
-                        navigate('/interview-results', {
-                          state: {
-                            questions: session.fullData.questions,
-                            answers: session.fullData.answers,
-                            evaluations: session.fullData.evaluations,
-                            overallScore: session.score,
-                            interviewConfig: session.fullData.interviewConfig,
-                            communicationAnalytics: session.fullData.communicationAnalytics,
-                          }
-                        });
-                      }
-                    }}
-                    className="flex items-center gap-4 px-5 py-4 hover:bg-[#F9FAFB] transition-colors cursor-pointer group border-b border-[#F1F5F9] last:border-b-0"
-                  >
-                  {/* Color dot */}
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: session.color + "15" }}
-                  >
-                    <Mic2 size={17} strokeWidth={2} style={{ color: session.color }} />
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: "0.875rem", color: "#1E293B" }}>
-                        {session.role}
-                      </span>
-                      <span
-                        className="px-2 py-0.5 rounded-full text-xs"
-                        style={{
-                          fontFamily: "'Inter', sans-serif",
-                          fontWeight: 600,
-                          fontSize: "0.7rem",
-                          backgroundColor: session.color + "12",
-                          color: session.color,
-                        }}
+                <motion.div
+                  variants={listVariants}
+                  initial="hidden"
+                  animate="show"
+                  className="divide-y divide-var(--glass-border)"
+                >
+                  {recentSessions.map((session, idx) => (
+                    <motion.div
+                      key={session.id || idx}
+                      variants={rowVariants}
+                      onClick={() => {
+                        if (session.fullData) {
+                          navigate('/interview-results', {
+                            state: {
+                              questions: session.fullData.questions,
+                              answers: session.fullData.answers,
+                              evaluations: session.fullData.evaluations,
+                              overallScore: session.score,
+                              interviewConfig: session.fullData.interviewConfig,
+                              communicationAnalytics: session.fullData.communicationAnalytics,
+                            }
+                          });
+                        }
+                      }}
+                      className="flex items-center gap-4 px-5 py-4 hover:bg-white/[0.02] transition-colors cursor-pointer group"
+                    >
+                      {/* Color dot */}
+                      <div
+                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: session.color + "15" }}
                       >
-                        {session.level}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.75rem", color: "#94A3B8" }}>
-                        <Clock size={11} strokeWidth={2} className="inline mr-1" />
-                        {session.date}
-                      </span>
-                      {session.tags.map((tag) => (
-                        <span key={tag} className="px-1.5 py-0.5 rounded bg-[#F1F5F9] text-[#64748B]"
-                          style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.68rem", fontWeight: 500 }}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                        <Mic2 size={17} strokeWidth={2} style={{ color: session.color }} />
+                      </div>
 
-                  {/* Score */}
-                  <ScoreBadge score={session.score} />
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: "0.875rem", color: "#FFFFFF" }}>
+                            {session.role}
+                          </span>
+                          <span
+                            className="px-2 py-0.5 rounded-full text-xs"
+                            style={{
+                              fontFamily: "'Inter', sans-serif",
+                              fontWeight: 600,
+                              fontSize: "0.7rem",
+                              backgroundColor: session.color + "12",
+                              color: session.color,
+                            }}
+                          >
+                            {session.level}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.75rem", color: "#9090a8" }}>
+                            <Clock size={11} strokeWidth={2} className="inline mr-1" />
+                            {session.date}
+                          </span>
+                          {session.tags.map((tag: string) => (
+                            <span key={tag} className="px-1.5 py-0.5 rounded bg-white/5 text-[#9090a8]"
+                              style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.68rem", fontWeight: 500 }}>
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
 
-                  <ChevronRight size={16} strokeWidth={2} className="text-[#CBD5E1] group-hover:text-[#2563EB] transition-colors" />
-                </div>
-                ))
+                      {/* Score */}
+                      <ScoreBadge score={session.score} />
+
+                      <ChevronRight size={16} strokeWidth={2} className="text-[#CBD5E1] group-hover:text-[#6C5CE7] transition-colors" />
+                    </motion.div>
+                  ))}
+                </motion.div>
               )}
             </div>
           </div>

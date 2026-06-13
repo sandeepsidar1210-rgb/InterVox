@@ -23,8 +23,9 @@ import {
   Zap,
   Pause,
   Save,
+  Copy,
 } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { motion } from "framer-motion";
 import SaveInterviewModal from "../components/SaveInterviewModal";
 import { saveInterviewSession } from "../../utils/interviewStorage";
 
@@ -280,21 +281,20 @@ function MetricCard({
   feedback: string;
 }) {
   const getScoreColor = (s: number) => {
-    if (s >= 85) return "#10B981";
-    if (s >= 70) return "#F59E0B";
-    return "#EF4444";
+    if (s >= 85) return "#34D399";
+    if (s >= 70) return "#FBBF24";
+    return "#F87171";
   };
 
   return (
     <div
-      className="bg-white rounded-2xl border border-[#E2E8F0] p-5 flex flex-col gap-4 hover:shadow-lg transition-shadow"
-      style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+      className="glass-panel p-5 flex flex-col gap-4 hover:border-glass-border/30 transition-all hover:-translate-y-0.5 duration-300"
     >
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ backgroundColor: color + "15" }}
+            style={{ backgroundColor: color + "20" }}
           >
             <Icon size={18} strokeWidth={2} style={{ color }} />
           </div>
@@ -304,7 +304,7 @@ function MetricCard({
                 fontFamily: "'Inter', sans-serif",
                 fontWeight: 600,
                 fontSize: "0.875rem",
-                color: "#475569",
+                color: "var(--text-primary)",
                 marginBottom: "2px",
               }}
             >
@@ -314,7 +314,7 @@ function MetricCard({
               style={{
                 fontFamily: "'Inter', sans-serif",
                 fontSize: "0.75rem",
-                color: "#94A3B8",
+                color: "var(--text-secondary)",
               }}
             >
               {feedback}
@@ -324,7 +324,7 @@ function MetricCard({
       </div>
       <div className="flex items-end justify-between">
         <div className="flex-1">
-          <div className="w-full h-2 bg-[#F1F5F9] rounded-full overflow-hidden">
+          <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
@@ -360,37 +360,36 @@ function QuestionAccordion({
   const [isOpen, setIsOpen] = useState(false);
 
   const getScoreColor = (s: number) => {
-    if (s >= 85) return "#10B981";
-    if (s >= 70) return "#F59E0B";
-    return "#EF4444";
+    if (s >= 85) return "#34D399";
+    if (s >= 70) return "#FBBF24";
+    return "#F87171";
   };
 
   const getScoreBg = (s: number) => {
-    if (s >= 85) return "#F0FDF4";
-    if (s >= 70) return "#FFFBEB";
-    return "#FEF2F2";
+    if (s >= 85) return "rgba(16, 185, 129, 0.15)";
+    if (s >= 70) return "rgba(245, 158, 11, 0.15)";
+    return "rgba(239, 68, 68, 0.15)";
   };
 
   return (
     <div
-      className="bg-white rounded-2xl border border-[#E2E8F0] overflow-hidden transition-all"
-      style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+      className="glass-panel overflow-hidden transition-all duration-300"
     >
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-5 hover:bg-[#F8FAFC] transition-colors text-left"
+        className="w-full flex items-center justify-between p-5 hover:bg-white/5 transition-colors text-left"
       >
         <div className="flex items-start gap-4 flex-1">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-            style={{ backgroundColor: "#EFF6FF" }}
+            style={{ backgroundColor: "rgba(108, 92, 231, 0.15)" }}
           >
             <span
               style={{
                 fontFamily: "'Montserrat', sans-serif",
                 fontWeight: 700,
                 fontSize: "0.875rem",
-                color: "#2563EB",
+                color: "var(--accent-primary)",
               }}
             >
               {index + 1}
@@ -402,7 +401,7 @@ function QuestionAccordion({
                 fontFamily: "'Inter', sans-serif",
                 fontWeight: 600,
                 fontSize: "0.9rem",
-                color: "#1E293B",
+                color: "var(--text-primary)",
                 lineHeight: 1.5,
               }}
             >
@@ -431,38 +430,37 @@ function QuestionAccordion({
         <ChevronDown
           size={18}
           strokeWidth={2}
-          className={`text-[#94A3B8] ml-3 flex-shrink-0 transition-transform duration-200 ${
+          className={`text-text-secondary ml-3 flex-shrink-0 transition-transform duration-200 ${
             isOpen ? "rotate-180" : ""
           }`}
         />
       </button>
 
       {isOpen && (
-        <div className="px-5 pb-5 pt-0 flex flex-col gap-5 border-t border-[#F1F5F9]">
+        <div className="px-5 pb-5 pt-0 flex flex-col gap-5 border-t border-glass-border">
           {/* Your Answer */}
           <div className="mt-5">
             <div className="flex items-center gap-2 mb-3">
-              <MessageSquare size={14} className="text-[#2563EB]" strokeWidth={2} />
+              <MessageSquare size={14} className="text-primary" strokeWidth={2} />
               <h4
                 style={{
                   fontFamily: "'Montserrat', sans-serif",
                   fontWeight: 700,
                   fontSize: "0.875rem",
-                  color: "#1E293B",
+                  color: "var(--text-primary)",
                 }}
               >
                 Your Answer
               </h4>
             </div>
             <div
-              className="p-4 rounded-xl border border-[#E2E8F0]"
-              style={{ backgroundColor: "#F8FAFC" }}
+              className="p-4 rounded-xl border border-glass-border bg-white/5"
             >
               <p
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: "0.875rem",
-                  color: "#475569",
+                  color: "var(--text-primary)",
                   lineHeight: 1.7,
                 }}
               >
@@ -474,27 +472,26 @@ function QuestionAccordion({
           {/* Ideal Answer */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <Target size={14} className="text-[#10B981]" strokeWidth={2} />
+              <Target size={14} className="text-emerald-400" strokeWidth={2} />
               <h4
                 style={{
                   fontFamily: "'Montserrat', sans-serif",
                   fontWeight: 700,
                   fontSize: "0.875rem",
-                  color: "#1E293B",
+                  color: "var(--text-primary)",
                 }}
               >
                 Ideal Answer Framework
               </h4>
             </div>
             <div
-              className="p-4 rounded-xl border border-[#D1FAE5]"
-              style={{ backgroundColor: "#F0FDF4" }}
+              className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5"
             >
               <p
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: "0.875rem",
-                  color: "#047857",
+                  color: "emerald-200",
                   lineHeight: 1.7,
                 }}
               >
@@ -506,13 +503,13 @@ function QuestionAccordion({
           {/* Improvement Suggestions */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <Lightbulb size={14} className="text-[#F59E0B]" strokeWidth={2} />
+              <Lightbulb size={14} className="text-amber-400" strokeWidth={2} />
               <h4
                 style={{
                   fontFamily: "'Montserrat', sans-serif",
                   fontWeight: 700,
                   fontSize: "0.875rem",
-                  color: "#1E293B",
+                  color: "var(--text-primary)",
                 }}
               >
                 Improvement Suggestions
@@ -522,18 +519,17 @@ function QuestionAccordion({
               {question.improvements.map((improvement, idx) => (
                 <li
                   key={idx}
-                  className="flex items-start gap-2 p-3 rounded-lg"
-                  style={{ backgroundColor: "#FFFBEB" }}
+                  className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5"
                 >
                   <span
                     className="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0"
-                    style={{ backgroundColor: "#F59E0B" }}
+                    style={{ backgroundColor: "var(--accent-secondary)" }}
                   />
                   <p
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.875rem",
-                      color: "#92400E",
+                      color: "amber-200",
                       lineHeight: 1.6,
                     }}
                   >
@@ -550,64 +546,66 @@ function QuestionAccordion({
 }
 
 function CircularProgress({ score }: { score: number }) {
-  const data = [
-    { name: "Score", value: score },
-    { name: "Remaining", value: 100 - score },
-  ];
-
-  const getColor = (s: number) => {
-    if (s >= 85) return "#10B981";
-    if (s >= 70) return "#F59E0B";
-    return "#EF4444";
-  };
-
+  const radius = 54;
+  const strokeWidth = 6;
+  const circumference = 2 * Math.PI * radius; // ~339.3
+  
   const getLabel = (s: number) => {
     if (s >= 85) return "Excellent";
     if (s >= 70) return "Good";
     return "Needs Work";
   };
 
-  const color = getColor(score);
+  const getStrokeColor = (s: number) => {
+    if (s >= 85) return "var(--accent-secondary)";
+    if (s >= 70) return "var(--accent-primary)";
+    return "#EF4444";
+  };
+
+  const color = getStrokeColor(score);
 
   return (
-    <div className="relative w-48 h-48">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            startAngle={90}
-            endAngle={-270}
-            innerRadius={65}
-            outerRadius={85}
-            dataKey="value"
-            stroke="none"
-          >
-            <Cell fill={color} />
-            <Cell fill="#F1F5F9" />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
+    <div className="relative w-40 h-40 flex items-center justify-center">
+      <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
+        {/* Track circle */}
+        <circle
+          cx="60"
+          cy="60"
+          r={radius}
+          fill="none"
+          stroke="rgba(255, 255, 255, 0.05)"
+          strokeWidth={strokeWidth}
+        />
+        {/* Animated score circle */}
+        <motion.circle
+          cx="60"
+          cy="60"
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeLinecap="round"
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: circumference - (score / 100) * circumference }}
+          transition={{ duration: 1.2, ease: "easeOut" }}
+        />
+      </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span
+          className="text-4xl font-extrabold text-white"
           style={{
             fontFamily: "'Montserrat', sans-serif",
-            fontWeight: 800,
-            fontSize: "2.5rem",
-            color: color,
             lineHeight: 1,
+            textShadow: "0 0 12px var(--accent-glow)"
           }}
         >
           {score}
         </span>
         <span
+          className="text-[10px] font-bold uppercase tracking-wider text-[#9090a8] mt-1"
           style={{
             fontFamily: "'Inter', sans-serif",
-            fontWeight: 600,
-            fontSize: "0.875rem",
-            color: "#64748B",
-            marginTop: "4px",
           }}
         >
           {getLabel(score)}
@@ -624,6 +622,22 @@ export default function InterviewResults() {
   // Save modal state
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [copiedReport, setCopiedReport] = useState(false);
+
+  const staggerContainer = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1,
+      },
+    },
+  };
+
+  const staggerItem = {
+    hidden: { opacity: 0, y: 15 },
+    show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } },
+  };
   
   // Get real evaluation data from navigation state
   const {
@@ -667,6 +681,51 @@ export default function InterviewResults() {
       improvements: evaluations[idx]?.improvements || [],
     })),
   } : mockResultData;
+
+  const handleCopyReport = async () => {
+    const metricsText = resultData.metrics.map(m => `- ${m.label}: ${m.score}% (${m.feedback})`).join("\n");
+    const strengthsText = resultData.strengths.map(s => `- ${s}`).join("\n");
+    const weaknessesText = resultData.weaknesses.map(w => `- ${w}`).join("\n");
+    const questionsText = resultData.questions.map((q, idx) => 
+      `Question ${idx + 1}: ${q.question}\nYour Answer: ${q.yourAnswer}\nIdeal Answer framework: ${q.idealAnswer}\nScore: ${q.score}%\nImprovements:\n${q.improvements.map(i => `  - ${i}`).join("\n")}`
+    ).join("\n\n");
+
+    const reportText = `INTERVOX AI INTERVIEW PRACTICE REPORT
+=====================================
+Date: ${resultData.date}
+Role: ${resultData.role} (${resultData.level})
+Overall Score: ${resultData.overallScore}%
+Duration: ${resultData.duration}
+
+OVERALL SUMMARY
+---------------
+${resultData.summary}
+
+PERFORMANCE BREAKDOWN
+--------------------
+${metricsText}
+
+KEY INSIGHTS
+------------
+Strengths:
+${strengthsText || "None recorded"}
+
+Areas for Improvement:
+${weaknessesText || "None recorded"}
+
+DETAILED REVIEW
+---------------
+${questionsText}
+`;
+
+    try {
+      await navigator.clipboard.writeText(reportText);
+      setCopiedReport(true);
+      setTimeout(() => setCopiedReport(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy report: ", err);
+    }
+  };
 
   // Export PDF functionality
   const handleExportPDF = () => {
@@ -797,13 +856,13 @@ export default function InterviewResults() {
         }
       `}</style>
       
-      <div className="min-h-screen bg-[#F9FAFB]" id="results-content">{/* Print-friendly ID */}
+      <div className="min-h-screen bg-background text-foreground" id="results-content">{/* Print-friendly ID */}
       {/* Top Bar */}
-      <header className="bg-white border-b border-[#E2E8F0] sticky top-0 z-30 px-6 lg:px-8 py-4">
+      <header className="glass-panel sticky top-0 z-30 px-6 lg:px-8 py-4 border-t-0 border-x-0 rounded-none bg-surface-1/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <button
             onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2 text-[#64748B] hover:text-[#2563EB] transition-colors"
+            className="flex items-center gap-2 text-text-secondary hover:text-primary transition-colors"
             style={{
               fontFamily: "'Inter', sans-serif",
               fontWeight: 500,
@@ -817,25 +876,45 @@ export default function InterviewResults() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleExportPDF}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-glass-border bg-glass-bg hover:bg-white/10 transition-colors text-text-primary"
               style={{
                 fontFamily: "'Inter', sans-serif",
                 fontWeight: 500,
                 fontSize: "0.875rem",
-                color: "#475569",
               }}
             >
               <Download size={14} strokeWidth={2} />
               Export PDF
             </button>
             <button
+              onClick={handleCopyReport}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-glass-border bg-glass-bg hover:bg-white/10 transition-colors text-text-primary"
+              style={{
+                fontFamily: "'Inter', sans-serif",
+                fontWeight: 500,
+                fontSize: "0.875rem",
+              }}
+            >
+              {copiedReport ? (
+                <>
+                  <Check size={14} className="text-emerald-400 animate-pulse" strokeWidth={2.5} />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy size={14} strokeWidth={2} />
+                  Copy Report
+                </>
+              )}
+            </button>
+            <button
               onClick={handleShareResults}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white transition-colors"
               style={{
                 fontFamily: "'Inter', sans-serif",
                 fontWeight: 600,
                 fontSize: "0.875rem",
-                boxShadow: "0 4px 12px rgba(37,99,235,0.25)",
+                boxShadow: "0 4px 12px var(--accent-glow)",
               }}
             >
               <Share2 size={14} strokeWidth={2} />
@@ -849,8 +928,7 @@ export default function InterviewResults() {
       <div className="px-6 lg:px-8 py-8 max-w-7xl mx-auto">
         {/* Hero Section */}
         <div
-          className="bg-gradient-to-br from-white to-[#F8FAFC] rounded-3xl border border-[#E2E8F0] p-8 lg:p-10 mb-8"
-          style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}
+          className="glass-panel p-8 lg:p-10 mb-8"
         >
           <div className="flex flex-col lg:flex-row items-center gap-8">
             {/* Score Ring */}
@@ -867,7 +945,7 @@ export default function InterviewResults() {
                     fontFamily: "'Montserrat', sans-serif",
                     fontWeight: 800,
                     fontSize: "clamp(1.5rem, 4vw, 2rem)",
-                    color: "#1E293B",
+                    color: "var(--text-primary)",
                     letterSpacing: "-0.02em",
                   }}
                 >
@@ -878,7 +956,7 @@ export default function InterviewResults() {
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: "1rem",
-                  color: "#64748B",
+                  color: "var(--text-secondary)",
                   marginBottom: "8px",
                 }}
               >
@@ -900,12 +978,12 @@ export default function InterviewResults() {
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3">
                 <button
                   onClick={() => navigate("/dashboard")}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition-colors"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/95 text-white transition-colors"
                   style={{
                     fontFamily: "'Inter', sans-serif",
                     fontWeight: 600,
                     fontSize: "0.875rem",
-                    boxShadow: "0 4px 16px rgba(37,99,235,0.3)",
+                    boxShadow: "0 4px 16px var(--accent-glow)",
                   }}
                 >
                   <RotateCcw size={14} strokeWidth={2} />
@@ -913,7 +991,7 @@ export default function InterviewResults() {
                 </button>
                 <button
                   onClick={() => navigate("/dashboard/history")}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] text-[#475569] transition-colors"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-glass-border bg-glass-bg hover:bg-white/10 text-text-primary transition-colors"
                   style={{
                     fontFamily: "'Inter', sans-serif",
                     fontWeight: 500,
@@ -934,7 +1012,7 @@ export default function InterviewResults() {
               fontFamily: "'Montserrat', sans-serif",
               fontWeight: 700,
               fontSize: "1.25rem",
-              color: "#1E293B",
+              color: "var(--text-primary)",
               marginBottom: "20px",
             }}
           >
@@ -955,7 +1033,7 @@ export default function InterviewResults() {
                 fontFamily: "'Montserrat', sans-serif",
                 fontWeight: 700,
                 fontSize: "1.25rem",
-                color: "#1E293B",
+                color: "var(--text-primary)",
                 marginBottom: "20px",
               }}
             >
@@ -964,22 +1042,21 @@ export default function InterviewResults() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Words Per Minute */}
               <div
-                className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                className="glass-panel p-5"
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "#10B98115" }}
+                    style={{ backgroundColor: "rgba(16, 185, 129, 0.15)" }}
                   >
-                    <TrendingUp size={18} strokeWidth={2} style={{ color: "#10B981" }} />
+                    <TrendingUp size={18} strokeWidth={2} style={{ color: "#34D399" }} />
                   </div>
                   <h3
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontWeight: 600,
                       fontSize: "0.875rem",
-                      color: "#64748B",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     Speaking Pace
@@ -991,7 +1068,7 @@ export default function InterviewResults() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "var(--text-primary)",
                     }}
                   >
                     {Math.round(communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.wordsPerMinute, 0) / communicationAnalytics.length)}
@@ -1000,7 +1077,7 @@ export default function InterviewResults() {
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.875rem",
-                      color: "#94A3B8",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     WPM
@@ -1010,7 +1087,7 @@ export default function InterviewResults() {
                   style={{
                     fontFamily: "'Inter', sans-serif",
                     fontSize: "0.75rem",
-                    color: "#94A3B8",
+                    color: "var(--text-secondary)",
                     marginTop: "8px",
                   }}
                 >
@@ -1020,22 +1097,21 @@ export default function InterviewResults() {
 
               {/* Fluency Score */}
               <div
-                className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                className="glass-panel p-5"
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "#2563EB15" }}
+                    style={{ backgroundColor: "rgba(108, 92, 231, 0.15)" }}
                   >
-                    <Zap size={18} strokeWidth={2} style={{ color: "#2563EB" }} />
+                    <Zap size={18} strokeWidth={2} style={{ color: "var(--accent-primary)" }} />
                   </div>
                   <h3
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontWeight: 600,
                       fontSize: "0.875rem",
-                      color: "#64748B",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     Fluency Score
@@ -1047,7 +1123,7 @@ export default function InterviewResults() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "var(--text-primary)",
                     }}
                   >
                     {Math.round(communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.fluencyScore, 0) / communicationAnalytics.length)}
@@ -1056,7 +1132,7 @@ export default function InterviewResults() {
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.875rem",
-                      color: "#94A3B8",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     %
@@ -1066,7 +1142,7 @@ export default function InterviewResults() {
                   style={{
                     fontFamily: "'Inter', sans-serif",
                     fontSize: "0.75rem",
-                    color: "#94A3B8",
+                    color: "var(--text-secondary)",
                     marginTop: "8px",
                   }}
                 >
@@ -1076,22 +1152,21 @@ export default function InterviewResults() {
 
               {/* Filler Words */}
               <div
-                className="bg-white rounded-2xl border border-[#E2E8F0] p-5"
-                style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+                className="glass-panel p-5"
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: "#F59E0B15" }}
+                    style={{ backgroundColor: "rgba(245, 158, 11, 0.15)" }}
                   >
-                    <Pause size={18} strokeWidth={2} style={{ color: "#F59E0B" }} />
+                    <Pause size={18} strokeWidth={2} style={{ color: "#FBBF24" }} />
                   </div>
                   <h3
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontWeight: 600,
                       fontSize: "0.875rem",
-                      color: "#64748B",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     Filler Words
@@ -1103,7 +1178,7 @@ export default function InterviewResults() {
                       fontFamily: "'Montserrat', sans-serif",
                       fontWeight: 800,
                       fontSize: "2rem",
-                      color: "#1E293B",
+                      color: "var(--text-primary)",
                     }}
                   >
                     {communicationAnalytics.reduce((sum: number, a: any) => sum + a.metrics.fillerWords.count, 0)}
@@ -1112,7 +1187,7 @@ export default function InterviewResults() {
                     style={{
                       fontFamily: "'Inter', sans-serif",
                       fontSize: "0.875rem",
-                      color: "#94A3B8",
+                      color: "var(--text-secondary)",
                     }}
                   >
                     total
@@ -1122,7 +1197,7 @@ export default function InterviewResults() {
                   style={{
                     fontFamily: "'Inter', sans-serif",
                     fontSize: "0.75rem",
-                    color: "#94A3B8",
+                    color: "var(--text-secondary)",
                     marginTop: "8px",
                   }}
                 >
@@ -1136,11 +1211,11 @@ export default function InterviewResults() {
         {/* AI Summary Section - ENHANCED */}
         <div className="mb-8">
           <div
-            className="bg-gradient-to-br from-[#EEF2FF] to-[#E0E7FF] rounded-2xl border-2 border-[#818CF8] p-6 lg:p-8"
-            style={{ boxShadow: "0 8px 32px rgba(99, 102, 241, 0.15)" }}
+            className="glass-panel p-6 lg:p-8 border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 to-purple-500/5"
+            style={{ boxShadow: "0 8px 32px rgba(99, 102, 241, 0.08)" }}
           >
             <div className="flex items-start gap-4 mb-5">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#818CF8] to-[#6366F1] flex items-center justify-center flex-shrink-0 shadow-lg">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center flex-shrink-0 shadow-lg">
                 <Sparkles size={24} className="text-white" strokeWidth={2.5} />
               </div>
               <div>
@@ -1149,7 +1224,7 @@ export default function InterviewResults() {
                     fontFamily: "'Montserrat', sans-serif",
                     fontWeight: 800,
                     fontSize: "1.5rem",
-                    color: "#1E293B",
+                    color: "var(--text-primary)",
                     marginBottom: "6px",
                     letterSpacing: "-0.02em",
                   }}
@@ -1157,25 +1232,20 @@ export default function InterviewResults() {
                   🤖 AI Interview Summary
                 </h2>
                 <p
-                  style={{
-                    fontFamily: "'Inter', sans-serif",
-                    fontSize: "0.875rem",
-                    color: "#4338CA",
-                    fontWeight: 600,
-                  }}
+                  className="text-indigo-300 text-sm font-semibold"
                 >
                   Comprehensive analysis based on your interview performance
                 </p>
               </div>
             </div>
             <div
-              className="bg-white/90 backdrop-blur-sm rounded-xl p-6 border border-[#C7D2FE] shadow-sm"
+              className="bg-surface-2/60 backdrop-blur-sm rounded-xl p-6 border border-glass-border shadow-sm"
             >
               <p
                 style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: "1rem",
-                  color: "#334155",
+                  color: "var(--text-primary)",
                   lineHeight: 1.9,
                   fontWeight: 400,
                 }}
@@ -1193,7 +1263,7 @@ export default function InterviewResults() {
               fontFamily: "'Montserrat', sans-serif",
               fontWeight: 700,
               fontSize: "1.25rem",
-              color: "#1E293B",
+              color: "var(--text-primary)",
               marginBottom: "20px",
             }}
           >
@@ -1202,88 +1272,96 @@ export default function InterviewResults() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Strengths */}
             <div
-              className="bg-white rounded-2xl border border-[#E2E8F0] p-6"
-              style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+              className="glass-panel p-6"
             >
               <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 rounded-xl bg-[#F0FDF4] flex items-center justify-center">
-                  <Check size={18} className="text-[#10B981]" strokeWidth={2.5} />
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                  <Check size={18} className="text-emerald-400" strokeWidth={2.5} />
                 </div>
                 <h3
                   style={{
                     fontFamily: "'Montserrat', sans-serif",
                     fontWeight: 700,
                     fontSize: "1.1rem",
-                    color: "#1E293B",
+                    color: "var(--text-primary)",
                   }}
                 >
                   Strengths
                 </h3>
               </div>
-              <ul className="flex flex-col gap-3">
+              <motion.ul 
+                variants={staggerContainer}
+                initial="hidden"
+                animate="show"
+                className="flex flex-col gap-3"
+              >
                 {resultData.strengths.map((strength, idx) => (
-                  <li
+                  <motion.li
                     key={idx}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-[#D1FAE5]"
-                    style={{ backgroundColor: "#F0FDF4" }}
+                    variants={staggerItem}
+                    className="flex items-start gap-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5"
                   >
-                    <CheckCircle2 size={18} className="text-[#10B981] flex-shrink-0 mt-0.5" strokeWidth={2} />
+                    <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0 mt-0.5" strokeWidth={2} />
                     <p
                       style={{
                         fontFamily: "'Inter', sans-serif",
                         fontSize: "0.875rem",
-                        color: "#047857",
+                        color: "emerald-200",
                         lineHeight: 1.6,
                       }}
                     >
                       {strength}
                     </p>
-                  </li>
+                  </motion.li>
                 ))}
-              </ul>
+              </motion.ul>
             </div>
 
             {/* Areas for Improvement */}
             <div
-              className="bg-white rounded-2xl border border-[#E2E8F0] p-6"
-              style={{ boxShadow: "0 1px 12px rgba(0,0,0,0.05)" }}
+              className="glass-panel p-6"
             >
               <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 rounded-xl bg-[#FFFBEB] flex items-center justify-center">
-                  <AlertTriangle size={18} className="text-[#F59E0B]" strokeWidth={2.5} />
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                  <AlertTriangle size={18} className="text-amber-400" strokeWidth={2.5} />
                 </div>
                 <h3
                   style={{
                     fontFamily: "'Montserrat', sans-serif",
                     fontWeight: 700,
                     fontSize: "1.1rem",
-                    color: "#1E293B",
+                    color: "var(--text-primary)",
                   }}
                 >
                   Areas for Improvement
                 </h3>
               </div>
-              <ul className="flex flex-col gap-3">
+              <motion.ul 
+                variants={staggerContainer}
+                initial="hidden"
+                animate="show"
+                className="flex flex-col gap-3"
+              >
                 {resultData.weaknesses.map((weakness, idx) => (
-                  <li
+                  <motion.li
                     key={idx}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-[#FED7AA]"
-                    style={{ backgroundColor: "#FFFBEB" }}
+                    variants={staggerItem}
+                    className="flex items-start gap-3 p-3 rounded-xl border border-amber-500/20 bg-amber-500/5"
                   >
-                    <AlertTriangle size={18} className="text-[#F59E0B] flex-shrink-0 mt-0.5" strokeWidth={2} />
+                    <AlertTriangle size={18} className="text-amber-400 flex-shrink-0 mt-0.5" strokeWidth={2} />
                     <p
                       style={{
                         fontFamily: "'Inter', sans-serif",
                         fontSize: "0.875rem",
-                        color: "#92400E",
+                        color: "amber-200",
                         lineHeight: 1.6,
                       }}
                     >
                       {weakness}
                     </p>
-                  </li>
+                  </motion.li>
                 ))}
-              </ul>
+              </motion.ul>
             </div>
           </div>
         </div>
@@ -1296,7 +1374,7 @@ export default function InterviewResults() {
                 fontFamily: "'Montserrat', sans-serif",
                 fontWeight: 700,
                 fontSize: "1.25rem",
-                color: "#1E293B",
+                color: "var(--text-primary)",
               }}
             >
               Detailed Question Review
@@ -1305,7 +1383,7 @@ export default function InterviewResults() {
               style={{
                 fontFamily: "'Inter', sans-serif",
                 fontSize: "0.875rem",
-                color: "#94A3B8",
+                color: "var(--text-secondary)",
               }}
             >
               {resultData.questions.length} questions answered

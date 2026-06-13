@@ -17,7 +17,7 @@ const reviews = [
     rating: 5,
     text: "The AI HR Manager on InterVox is absolutely next level. It didn't just ask questions — it called me out when I was being vague and guided me to structure my answers better. After 8 sessions, I walked into my Google interview and felt completely calm. Got the offer!",
     accent: "#7C3AED",
-    bg: "#FAFAFE",
+    bg: "var(--glass-bg)",
     highlight: true,
   },
   {
@@ -28,7 +28,7 @@ const reviews = [
     rating: 5,
     text: "I was skeptical that an AI could actually simulate a real interview. InterVox proved me wrong. The feedback on my communication and confidence levels was stunningly accurate. It's like having a personal interview coach available 24/7.",
     accent: "#2563EB",
-    bg: "#FAFCFF",
+    bg: "var(--glass-bg)",
   },
   {
     name: "Sofia Alvarez",
@@ -38,7 +38,7 @@ const reviews = [
     rating: 5,
     text: "As someone who works in HR, I was impressed by how realistic the AI interviewer was. The questions were spot on for behavioral rounds. Even I learned something about structuring answers using the STAR method feedback. Highly recommend for freshers!",
     accent: "#0891B2",
-    bg: "#FAFEFE",
+    bg: "var(--glass-bg)",
     highlight: false,
   },
   {
@@ -49,7 +49,7 @@ const reviews = [
     rating: 5,
     text: "InterVox is the real deal for experienced professionals. The senior-level scenarios and leadership questions are challenging and extremely relevant. The instant scoring breakdown — confidence, clarity, structure — helped me identify blind spots I never knew I had. Worth every minute.",
     accent: "#059669",
-    bg: "#FAFFF9",
+    bg: "var(--glass-bg)",
   },
 ];
 
@@ -66,10 +66,9 @@ function StarRow() {
 function ReviewCard({ review }: { review: (typeof reviews)[0] }) {
   return (
     <div
-      className="rounded-2xl border border-[#E2E8F0] p-6 flex flex-col gap-4 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 group flex-shrink-0"
+      className="glass-panel p-6 flex flex-col gap-4 transition-all duration-200 hover:border-glass-border/30 hover:-translate-y-0.5 group flex-shrink-0"
       style={{
-        backgroundColor: review.bg,
-        boxShadow: "0 2px 16px rgba(0,0,0,0.05)",
+        boxShadow: "0 2px 16px rgba(0,0,0,0.2)",
         width: "380px",
       }}
     >
@@ -87,7 +86,7 @@ function ReviewCard({ review }: { review: (typeof reviews)[0] }) {
           fontFamily: "'Inter', sans-serif",
           fontSize: "0.875rem",
           lineHeight: 1.75,
-          color: "#374151",
+          color: "var(--text-primary)",
         }}
       >
         "{review.text}"
@@ -97,14 +96,14 @@ function ReviewCard({ review }: { review: (typeof reviews)[0] }) {
       <StarRow />
 
       {/* Divider */}
-      <div className="border-t border-[#F1F5F9]" />
+      <div className="border-t border-glass-border" />
 
       {/* User info */}
       <div className="flex items-center gap-3">
         <ImageWithFallback
           src={review.avatar}
           alt={review.name}
-          className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm"
+          className="w-10 h-10 rounded-full object-cover border-2 border-glass-border shadow-sm"
         />
         <div className="flex flex-col">
           <span
@@ -112,7 +111,7 @@ function ReviewCard({ review }: { review: (typeof reviews)[0] }) {
               fontFamily: "'Inter', sans-serif",
               fontWeight: 700,
               fontSize: "0.85rem",
-              color: "#1E293B",
+              color: "var(--text-primary)",
             }}
           >
             {review.name}
@@ -134,7 +133,7 @@ function ReviewCard({ review }: { review: (typeof reviews)[0] }) {
             style={{
               fontFamily: "'Inter', sans-serif",
               fontWeight: 500,
-              backgroundColor: review.accent + "12",
+              backgroundColor: review.accent + "20",
               color: review.accent,
             }}
           >
@@ -151,15 +150,15 @@ export function Testimonials() {
   const duplicatedReviews = [...reviews, ...reviews, ...reviews];
 
   return (
-    <section className="bg-white py-20 lg:py-28 overflow-hidden">
+    <section className="bg-background py-20 lg:py-28 overflow-hidden">
       <div className="max-w-7xl mx-auto px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-16 flex flex-col items-center gap-4">
           <span
-            className="inline-flex items-center gap-2 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] px-4 py-1.5 rounded-full text-xs"
+            className="inline-flex items-center gap-2 text-primary bg-primary/10 border border-primary/20 px-4 py-1.5 rounded-full text-xs"
             style={{ fontFamily: "'Inter', sans-serif", fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}
           >
-            <Star size={12} strokeWidth={2.5} className="fill-[#2563EB]" />
+            <Star size={12} strokeWidth={2.5} className="fill-primary text-primary" />
             Real Stories, Real Results
           </span>
           <h2
@@ -169,17 +168,17 @@ export function Testimonials() {
               fontSize: "clamp(1.75rem, 3.5vw, 2.5rem)",
               lineHeight: 1.2,
               letterSpacing: "-0.025em",
-              color: "#1E293B",
+              color: "var(--text-primary)",
             }}
           >
             Loved by{" "}
-            <span className="text-[#2563EB]">2,400+ Job Seekers</span>
+            <span className="text-secondary font-bold">2,400+ Job Seekers</span>
           </h2>
           <p
             style={{
               fontFamily: "'Inter', sans-serif",
               fontSize: "1.0625rem",
-              color: "#64748B",
+              color: "var(--text-secondary)",
               lineHeight: 1.7,
               maxWidth: "500px",
             }}
@@ -194,10 +193,10 @@ export function Testimonials() {
                 <Star key={i} size={18} className="fill-[#F59E0B] text-[#F59E0B]" />
               ))}
             </div>
-            <span style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1.125rem", color: "#1E293B" }}>
+            <span style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 700, fontSize: "1.125rem", color: "var(--text-primary)" }}>
               4.9
             </span>
-            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.875rem", color: "#94A3B8" }}>
+            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
               from 2,400+ reviews
             </span>
           </div>
