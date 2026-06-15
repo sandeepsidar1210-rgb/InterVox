@@ -7,6 +7,7 @@ import { useVoiceCapture } from '../../hooks/useVoiceCapture';
 import { useCountUp } from '../../hooks/useCountUp';
 import { InterviewerAvatar, AudioVisualizer, PageLoader } from '../components';
 import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft } from 'lucide-react';
+import { useToast } from '../../hooks/useToast';
 
 // State Machine Definition
 type Phase = 'connecting' | 'ready' | 'listening' | 'processing' | 'speaking' | 'ended';
@@ -127,6 +128,15 @@ export default function VoiceInterviewPage() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   
   const liveScoreCount = useCountUp(runningScore);
+  const toast = useToast();
+
+  // Personalisation UI States
+  const [candidateName, setCandidateName] = useState<string | null>(null);
+  const [roleName, setRoleName] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
+  const [highlightAvatar, setHighlightAvatar] = useState(false);
+  const [escalationHistory, setEscalationHistory] = useState<string[]>([]);
 
   // Fetch token on mount
   useEffect(() => {
@@ -242,14 +252,21 @@ export default function VoiceInterviewPage() {
           interviewType: interviewConfig.interviewType || 'TECHNICAL',
           durationMinutes: 15,
           maxQuestions: maxQuestions,
-          voice: interviewConfig.voice || 'meera'
+          voice: interviewConfig.voice || 'meera',
+          resumeText: interviewConfig.resumeText || null,
+          useStoredResume: interviewConfig.useStoredResume || false,
+          jdText: interviewConfig.jdText || null
         },
         authToken: token
       });
     });
 
-    socket.on('session:ready', (data: { sessionId: string; firstQuestion: string }) => {
+    socket.on('session:ready', (data: { sessionId: string; firstQuestion: string; candidateName?: string | null; roleName?: string | null; companyName?: string | null; projectName?: string | null }) => {
       dispatch({ type: 'SESSION_READY', payload: data });
+      if (data.candidateName) setCandidateName(data.candidateName);
+      if (data.roleName) setRoleName(data.roleName);
+      if (data.companyName) setCompanyName(data.companyName);
+      if (data.projectName) setProjectName(data.projectName);
     });
 
     socket.on('transcript:final', (data: { text: string }) => {
@@ -262,6 +279,15 @@ export default function VoiceInterviewPage() {
 
     socket.on('interviewer:done', (data: { fullText: string }) => {
       dispatch({ type: 'INTERVIEWER_DONE', payload: data.fullText });
+    });
+
+    socket.on('difficulty:changed', (data: { from: string; to: string; direction: 'up' | 'down' }) => {
+      if (data.direction === 'up') {
+        toast.success("↑ Raising the bar — you're doing great");
+      } else {
+        toast.info("Let's try a different angle");
+      }
+      setEscalationHistory(prev => [...prev, `Q${questionCount}: ${data.direction === 'up' ? 'escalated' : 'de-escalated'} to ${data.to}`]);
     });
 
     socket.on('tts:audio', (data: { audioBase64: string; sampleRate: number; textFallback?: string }) => {
@@ -290,6 +316,8 @@ export default function VoiceInterviewPage() {
           radarScores: data.finalReport.radarScores,
           communicationAnalytics: data.finalReport.communicationStats,
           questions: data.finalReport.detailedQuestionAnalysis || [],
+          difficultyJourney: data.finalReport.difficultyJourney || escalationHistory,
+          skillGapReport: data.finalReport.skillGapReport || null,
           interviewConfig: {
             role: interviewConfig.domain || 'Backend',
             difficulty: interviewConfig.difficulty || 'Medium'
@@ -305,7 +333,21 @@ export default function VoiceInterviewPage() {
     return () => {
       socket.disconnect();
     };
-  }, [token]);
+  }, [token, escalationHistory]);
+
+  // Avatar border glow highlight triggers when candidate's name or project is referenced
+  useEffect(() => {
+    if (!interviewerText) return;
+    const hasName = candidateName && interviewerText.toLowerCase().includes(candidateName.toLowerCase());
+    const hasProject = projectName && interviewerText.toLowerCase().includes(projectName.toLowerCase());
+    if (hasName || hasProject) {
+      setHighlightAvatar(true);
+      const timer = setTimeout(() => {
+        setHighlightAvatar(false);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [interviewerText, candidateName, projectName]);
 
   // Voice VAD Hook
   const { start: startMic, stop: stopMic, isRecording } = useVoiceCapture({
@@ -387,11 +429,18 @@ export default function VoiceInterviewPage() {
           </button>
           <div>
             <span className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">
-              Live Practice Session
+              {candidateName ? `Interviewing: ${candidateName}` : 'Live Practice Session'}
             </span>
-            <h1 className="text-sm font-bold text-white font-montserrat leading-tight">
-              {interviewConfig.domain || 'Backend'} Interview
-            </h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <h1 className="text-sm font-bold text-white font-montserrat leading-tight">
+                {interviewConfig.domain || 'Backend'} Interview
+              </h1>
+              {roleName && (
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-primary/20 text-primary border border-primary/30">
+                  → {roleName} {companyName ? `at ${companyName}` : ''}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -426,7 +475,12 @@ export default function VoiceInterviewPage() {
         {/* Avatar and Visualizer Section */}
         <div className="flex flex-col items-center justify-center flex-1 gap-6 my-auto">
           <div className="relative">
-            <InterviewerAvatar state={getAvatarState()} />
+            <InterviewerAvatar 
+              state={getAvatarState()} 
+              name="Arjun"
+              voice={interviewConfig.voice || 'meera'}
+              highlight={highlightAvatar}
+            />
             {phase === 'listening' && (
               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

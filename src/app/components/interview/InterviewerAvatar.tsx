@@ -2,11 +2,12 @@ import { motion } from "framer-motion";
 
 interface InterviewerAvatarProps {
   state: "idle" | "speaking" | "listening" | "thinking";
-  name: string;
-  voice: string;
+  name?: string;
+  voice?: string;
+  highlight?: boolean;
 }
 
-export default function InterviewerAvatar({ state, name, voice }: InterviewerAvatarProps) {
+export default function InterviewerAvatar({ state, name = "Arjun", voice = "meera", highlight = false }: InterviewerAvatarProps) {
   // Get initials from name
   const initials = name
     .split(" ")
@@ -31,6 +32,26 @@ export default function InterviewerAvatar({ state, name, voice }: InterviewerAva
   return (
     <div className="flex flex-col items-center justify-center p-6 bg-var(--surface-2) rounded-2xl border border-var(--glass-border) glass-panel text-center w-full max-w-sm mx-auto select-none">
       <div className="relative w-40 h-40 flex items-center justify-center mb-6">
+        {/* Personalisation Reference Glow Highlight */}
+        {highlight && (
+          <motion.div
+            className="absolute -inset-2 rounded-full border-4"
+            style={{
+              borderColor: "var(--accent-secondary, #00CEC9)",
+              boxShadow: "0 0 20px var(--accent-secondary, #00CEC9)",
+              opacity: 0.9,
+            }}
+            animate={{
+              scale: [1, 1.06, 1],
+              opacity: [0.9, 0.3, 0.9],
+            }}
+            transition={{
+              duration: 1.5,
+              ease: "easeInOut",
+            }}
+          />
+        )}
+
         {/* Pulsing ring for speaking */}
         {state === "speaking" && (
           <motion.div

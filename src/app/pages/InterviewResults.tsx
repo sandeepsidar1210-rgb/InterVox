@@ -834,7 +834,9 @@ export default function InterviewResults() {
             strengths: extractStrengths(mappedEvaluations),
             weaknesses: extractWeaknesses(mappedEvaluations),
             metrics: calculateMetrics(mappedEvaluations),
-            questions: mappedQuestions
+            questions: mappedQuestions,
+            difficultyJourney: session.difficulty_journey || [],
+            skillGapReport: session.skill_gap_report || null
           };
 
           setDbResultData(mappedResult);
@@ -868,6 +870,8 @@ export default function InterviewResults() {
                 answers: mappedResult.questions.map(q => q.yourAnswer),
                 evaluations: mappedEvaluations,
                 communicationAnalytics: session.communication_stats ? [session.communication_stats] : [],
+                difficultyJourney: session.difficulty_journey || [],
+                skillGapReport: session.skill_gap_report || null,
                 interviewConfig: {
                   role: mappedResult.role,
                   difficulty: session.difficulty || 'medium',
@@ -896,10 +900,8 @@ export default function InterviewResults() {
                 ? generateSummary(localSession.fullData.evaluations, localSession.score)
                 : "No summary available",
               strengths: localSession.fullData?.evaluations ? extractStrengths(localSession.fullData.evaluations) : [],
-              weaknesses: localSession.fullData?.evaluations ? extractWeaknesses(localSession.fullData.evaluations) : [],
-              metrics: localSession.fullData?.evaluations 
-                ? calculateMetrics(localSession.fullData.evaluations)
-                : mockResultData.metrics,
+              difficultyJourney: localSession.fullData?.difficultyJourney || [],
+              skillGapReport: localSession.fullData?.skillGapReport || null,
               questions: (localSession.fullData?.questions || []).map((q: any, idx: number) => ({
                 id: idx + 1,
                 question: q.question || '',
@@ -963,6 +965,8 @@ export default function InterviewResults() {
       improvements: evaluations[idx]?.improvements || [],
       strengths: evaluations[idx]?.strengths || [],
     })),
+    difficultyJourney: location.state?.difficultyJourney || [],
+    skillGapReport: location.state?.skillGapReport || null
   } : mockResultData;
 
   const localRadarScores = passedOverallScore !== undefined
@@ -1093,6 +1097,8 @@ ${questionsText}
           answers: userAnswers,
           evaluations: evaluations,
           communicationAnalytics: communicationAnalytics,
+          difficultyJourney: location.state?.difficultyJourney || [],
+          skillGapReport: location.state?.skillGapReport || null,
           interviewConfig: interviewConfig,
         },
       });
@@ -1116,6 +1122,31 @@ ${questionsText}
   if (loading) {
     return <PageLoader />;
   }
+
+  // Helper to map question difficulty transitions
+  const getQuestionDifficulties = () => {
+    const difficultyJourney = resultData.difficultyJourney || [];
+    const startingDiff = (interviewConfig?.difficulty || 'medium').toLowerCase();
+    const diffs: ('easy' | 'medium' | 'hard')[] = [];
+    let current = startingDiff as 'easy' | 'medium' | 'hard';
+    
+    for (let i = 0; i < resultData.questions.length; i++) {
+      const qNum = i + 1;
+      const transition = (difficultyJourney || []).find((entry: string) => 
+        entry.toLowerCase().startsWith(`q${qNum}:`) || 
+        entry.toLowerCase().startsWith(`q${qNum} `)
+      );
+      
+      if (transition) {
+        if (transition.toLowerCase().includes('easy')) current = 'easy';
+        else if (transition.toLowerCase().includes('medium')) current = 'medium';
+        else if (transition.toLowerCase().includes('hard')) current = 'hard';
+      }
+      
+      diffs.push(current);
+    }
+    return diffs;
+  };
 
   return (
     <>
@@ -1331,6 +1362,202 @@ ${questionsText}
             </div>
           </div>
         </div>
+
+        {/* Difficulty Journey Timeline */}
+        {resultData.difficultyJourney && resultData.difficultyJourney.length > 0 && (
+          <div className="glass-panel p-6 lg:p-8 mb-8">
+            <h3 className="text-lg font-bold text-white mb-6 font-montserrat">
+              📈 Difficulty Journey
+            </h3>
+            <div className="relative flex flex-col gap-4">
+              <div className="flex items-center justify-between relative py-6 px-4">
+                {/* Horizontal progress bar background */}
+                <div className="absolute top-1/2 left-0 right-0 h-1 bg-white/10 -translate-y-1/2 z-0 rounded-full" />
+                
+                {/* Render nodes for each question */}
+                {(() => {
+                  const diffs = getQuestionDifficulties();
+                  return resultData.questions.map((q, idx) => {
+                    const qNum = idx + 1;
+                    const qScore = q.score;
+                    const diff = diffs[idx] || 'medium';
+                    
+                    const dotColor = diff === 'easy' ? '#10B981' : diff === 'medium' ? '#F59E0B' : '#EF4444';
+                    const diffLabel = diff.charAt(0).toUpperCase() + diff.slice(1);
+                    
+                    return (
+                      <div key={idx} className="relative z-10 flex flex-col items-center group cursor-pointer">
+                        <div 
+                          className="w-5 h-5 rounded-full border-4 border-[#1e1e24] flex items-center justify-center transition-all group-hover:scale-125 duration-150"
+                          style={{ backgroundColor: dotColor, boxShadow: `0 0 10px ${dotColor}` }}
+                        />
+                        <span className="text-[10px] font-bold text-text-secondary mt-2">Q{qNum}</span>
+                        <span className="text-[9px] mt-0.5 uppercase tracking-wide font-semibold" style={{ color: dotColor }}>
+                          {diffLabel}
+                        </span>
+
+                        {/* Hover Tooltip */}
+                        <div className="absolute bottom-full mb-3 hidden group-hover:flex flex-col items-center z-30 pointer-events-none">
+                          <div className="bg-[#1e1e24] border border-glass-border p-3 rounded-xl shadow-2xl text-xs max-w-xs w-48 text-left leading-normal">
+                            <p className="font-extrabold text-white mb-1">Question {qNum}</p>
+                            <p className="text-[10px] text-text-secondary line-clamp-2 mb-2">"{q.question}"</p>
+                            <div className="flex items-center justify-between text-[10px] pt-1 border-t border-glass-border/30">
+                              <span className="font-bold uppercase" style={{ color: dotColor }}>{diffLabel}</span>
+                              <span className="font-bold text-emerald-400">Score: {qScore}%</span>
+                            </div>
+                          </div>
+                          <div className="w-2.5 h-2.5 bg-[#1e1e24] border-r border-b border-glass-border rotate-45 -mt-1.5" />
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              
+              <div className="flex items-center justify-between border-t border-glass-border/30 pt-4 mt-2">
+                <span className="text-xs text-text-secondary font-semibold">
+                  Interview Pace Calibration
+                </span>
+                <span className="text-xs font-bold text-primary font-montserrat">
+                  {(() => {
+                    const diffs = getQuestionDifficulties();
+                    const startingDiff = (interviewConfig?.difficulty || 'medium').toLowerCase();
+                    const hasHard = diffs.includes('hard');
+                    const hasMedium = diffs.includes('medium');
+                    
+                    let peak = 'Easy';
+                    if (hasHard) peak = 'Hard';
+                    else if (hasMedium) peak = 'Medium';
+                    
+                    const startLabel = startingDiff.charAt(0).toUpperCase() + startingDiff.slice(1);
+                    return `Started at ${startLabel} · Peaked at ${peak}`;
+                  })()}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Role Readiness Gap Report (only if JD was provided) */}
+        {resultData.skillGapReport && (
+          <div className="glass-panel p-6 lg:p-8 mb-8 border-emerald-500/10">
+            <h2 className="text-xl font-bold text-white mb-6 font-montserrat flex items-center gap-2">
+              🎯 Target Role Readiness
+            </h2>
+            
+            {/* Readiness Meter */}
+            <div className="flex flex-col gap-2 mb-8">
+              <div className="flex justify-between items-center text-sm font-semibold">
+                <span className="text-text-secondary">Overall Match Score</span>
+                <span className="text-white text-lg font-extrabold">{resultData.skillGapReport.overallReadiness}%</span>
+              </div>
+              <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500 transition-all duration-1000 ease-out"
+                  style={{ width: `${resultData.skillGapReport.overallReadiness}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Three Columns: Demonstrated, Partial, Gaps */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="p-4 rounded-2xl border border-emerald-500/10 bg-emerald-500/5 flex flex-col gap-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400">Demonstrated Skills</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {resultData.skillGapReport.demonstrated && resultData.skillGapReport.demonstrated.length > 0 ? (
+                    resultData.skillGapReport.demonstrated.map((skill: string, idx: number) => (
+                      <span key={idx} className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                        {skill}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[10px] text-text-secondary">None identified</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-amber-500/10 bg-amber-500/5 flex flex-col gap-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400">Partially Demonstrated</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {resultData.skillGapReport.partiallyDemonstrated && resultData.skillGapReport.partiallyDemonstrated.length > 0 ? (
+                    resultData.skillGapReport.partiallyDemonstrated.map((skill: string, idx: number) => (
+                      <span key={idx} className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                        {skill}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[10px] text-text-secondary">None identified</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-red-500/10 bg-red-500/5 flex flex-col gap-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-red-400">Skill Gaps</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {resultData.skillGapReport.gaps && resultData.skillGapReport.gaps.length > 0 ? (
+                    resultData.skillGapReport.gaps.map((skill: string, idx: number) => (
+                      <span key={idx} className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-red-500/15 text-red-400 border border-red-500/20">
+                        {skill}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[10px] text-text-secondary">None identified</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Recommendations Table */}
+            {resultData.skillGapReport.recommendations && resultData.skillGapReport.recommendations.length > 0 && (
+              <div className="mb-8 overflow-hidden border border-glass-border bg-surface-2/30 rounded-2xl">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-glass-border bg-white/[0.02] text-text-secondary font-bold">
+                      <th className="p-3.5">Target Skill</th>
+                      <th className="p-3.5">Suggested Resource / Topic</th>
+                      <th className="p-3.5 text-center">Priority</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-glass-border text-white">
+                    {resultData.skillGapReport.recommendations.map((rec: any, idx: number) => {
+                      const priority = rec.priority?.toLowerCase() || 'medium';
+                      const badgeColor = 
+                        priority === 'high' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        priority === 'medium' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                        'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                      return (
+                        <tr key={idx} className="hover:bg-white/[0.01] transition-colors">
+                          <td className="p-3.5 font-bold">{rec.skill}</td>
+                          <td className="p-3.5 text-text-secondary">{rec.resource}</td>
+                          <td className="p-3.5 text-center">
+                            <span className={`px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-wider ${badgeColor}`}>
+                              {priority}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Verdict Banner */}
+            {resultData.skillGapReport.verdict && (
+              <div className="p-5 border border-glass-border bg-gradient-to-r from-[#2563EB]/10 to-[#6C5CE7]/10 rounded-2xl flex gap-3.5 items-start">
+                <Sparkles size={20} className="text-[#2563EB] flex-shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#2563EB] block mb-1">
+                    AI Interviewer Verdict
+                  </span>
+                  <p className="text-sm font-semibold text-white">
+                    "{resultData.skillGapReport.verdict}"
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* AI Summary Section */}
         {resultData.summary && (

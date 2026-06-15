@@ -8,6 +8,10 @@ import FormData from 'form-data';
 import fetch from 'node-fetch';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
+import { openai } from './utils/ai';
+import { parseResume, parseJD, ParsedResume, ParsedJD } from './services/resumeParser';
+import { generatePersonalisedQuestions } from './services/questionGenerator';
+import { DifficultyState, shouldEscalate, shouldDeescalate, getNextDifficulty, generateAdaptiveFollowUp } from './services/adaptiveDifficulty';
 
 dotenv.config();
 
@@ -844,6 +848,32 @@ app.post('/api/interview/generate-question', async (req, res) => {
   }
 });
 
+// Generate Personalised Questions API (REST Endpoint)
+app.post('/api/interview/generate-personalised-questions', async (req, res) => {
+  try {
+    const { config, resumeText, jdText } = req.body;
+    let parsedResume = null;
+    let parsedJD = null;
+
+    if (resumeText) {
+      parsedResume = await parseResume(resumeText);
+    }
+    if (jdText) {
+      parsedJD = await parseJD(jdText);
+    }
+
+    const questions = await generatePersonalisedQuestions(config, parsedResume, parsedJD);
+    res.json({
+      questions,
+      parsedResume: parsedResume ? { name: parsedResume.name } : null,
+      parsedJD: parsedJD ? { roleName: parsedJD.roleName, companyName: parsedJD.companyName } : null
+    });
+  } catch (error) {
+    console.error('❌ REST generate-personalised-questions error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // Evaluate Answer API (REST Endpoint)
 app.post('/api/interview/evaluate', async (req, res) => {
   try {
@@ -1310,6 +1340,11 @@ interface SocketSession {
   questionCount: number;
   answers: Array<{ questionIndex: number; questionText: string; transcript: string; score?: any }>;
   isProcessing: boolean;
+  parsedResume?: ParsedResume | null;
+  parsedJD?: ParsedJD | null;
+  difficultyState?: DifficultyState;
+  nextAdaptiveQuestion?: string | null;
+  questionBank?: string[];
 }
 
 const socketSessions = new Map<string, SocketSession>();
@@ -1373,13 +1408,48 @@ async function classifyIntent(transcript: string, history: any[]): Promise<'answ
   return 'answer';
 }
 
-// System prompt builder
-function buildSystemPrompt(config: any, questionCount: number): string {
-  return `You are ${config.voice || 'meera'}, a friendly and professional AI technical interviewer specializing in ${config.domain || 'Software Engineering'}.
-You are conducting a ${config.difficulty || 'medium'} difficulty interview.
-Current question count: ${questionCount} of ${config.maxQuestions || 5}.
-Please keep your replies extremely concise and conversational (maximum 2-3 sentences).
-Always ask one question at a time. If the interview is concluding, wrap up by saying: "That wraps up our session today. Thank you for your time."`;
+// System prompt builder with full candidate context and target role JD
+function buildSystemPrompt(session: SocketSession): string {
+  const { config, parsedResume, parsedJD, questionCount } = session;
+
+  const candidateCtx = parsedResume ? `
+You are interviewing ${parsedResume.name ?? 'the candidate'}.
+Their background: ${parsedResume.currentRole || 'Not specified'}, ${parsedResume.yearsExperience || 'unknown'} years experience.
+Their key skills: ${parsedResume.skills.slice(0, 8).join(', ')}.
+Their notable projects: ${parsedResume.topProjects.slice(0, 2).map(p => p.name).join(', ')}.
+Reference these naturally in follow-ups — e.g. "Given your experience with ${parsedResume.topProjects[0]?.name || 'your projects'}, how would you..."
+` : '';
+
+  const roleCtx = parsedJD ? `
+Target role: ${parsedJD.roleName || 'Target Role'} at ${parsedJD.companyName || 'Target Company'}.
+Required skills to probe: ${parsedJD.requiredSkills.slice(0, 6).join(', ')}.
+If candidate hasn't demonstrated a required skill yet, probe it.
+` : '';
+
+  const bankCtx = session.questionBank && session.questionBank.length > 0 ? `
+Pre-generated personalized question bank for this session:
+${session.questionBank.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+If you choose to "move on" to a new question, please ask the next question from the bank instead of inventing one.
+` : '';
+
+  const currentDiff = session.difficultyState?.current || config.difficulty;
+
+  return `You are Arjun, a senior engineering interviewer.
+${candidateCtx}
+${roleCtx}
+${bankCtx}
+Difficulty: ${currentDiff}. Domain: ${config.domain}.
+Interview type: ${config.interviewType}.
+Questions asked so far: ${questionCount} of ${config.maxQuestions}.
+
+Rules:
+- Speak naturally. Use short acknowledgments before each response.
+- After each answer choose: follow-up if vague, challenge if wrong, move on if good.
+- Keep replies under 2 sentences unless explaining something.
+- Reference the candidate's actual experience when relevant.
+- Never say "Great answer!" — use natural reactions.
+- When all ${config.maxQuestions} questions are done say exactly: "That wraps up our session today."
+`;
 }
 
 // Sarvam AI speech stream
@@ -1489,24 +1559,124 @@ async function saveAnswerToSupabase(sessionId: string, questionIndex: number, qu
 // Async score execution
 async function scoreAnswerAsync(socket: any, session: SocketSession, transcript: string, question: string) {
   try {
-    const score = await fetchOpenAIScore(question, transcript, session.config.domain, session.config.difficulty);
+    const currentDiff = session.difficultyState?.current || session.config.difficulty;
+    const scoreData = await fetchOpenAIScore(question, transcript, session.config.domain, currentDiff);
     
     const lastAnswer = session.answers[session.answers.length - 1];
     if (lastAnswer) {
-      lastAnswer.score = score;
+      lastAnswer.score = scoreData;
     }
 
-    socket.emit('score:update', score);
+    socket.emit('score:update', scoreData);
 
     // Save evaluation scores back to Supabase
     await supabaseAdmin
       .from('answers')
-      .update({ score_data: score })
+      .update({ score_data: scoreData })
       .eq('session_id', session.sessionId)
       .eq('question_index', session.questionCount);
+
+    // Adaptive difficulty logic check
+    const score = scoreData.score ?? 5;
+
+    if (session.difficultyState) {
+      // Update consecutive counters
+      if (score >= 8) {
+        session.difficultyState.consecutiveHighScores++;
+        session.difficultyState.consecutiveLowScores = 0;
+      } else if (score <= 3) {
+        session.difficultyState.consecutiveLowScores++;
+        session.difficultyState.consecutiveHighScores = 0;
+      } else {
+        session.difficultyState.consecutiveHighScores = 0;
+        session.difficultyState.consecutiveLowScores = 0;
+      }
+
+      // Check if we should adapt
+      if (shouldEscalate(session.difficultyState, score)) {
+        const newDiff = getNextDifficulty(session.difficultyState.current, 'up');
+        if (newDiff !== session.difficultyState.current) {
+          const oldDiff = session.difficultyState.current;
+          session.difficultyState.current = newDiff;
+          session.difficultyState.consecutiveHighScores = 0;
+          session.difficultyState.escalationHistory.push(`Q${session.questionCount}: escalated to ${newDiff}`);
+          socket.emit('difficulty:changed', { from: oldDiff, to: newDiff, direction: 'up' });
+          
+          // Pre-generate adaptive follow-up
+          const systemPrompt = buildSystemPrompt(session);
+          const adaptiveQ = await generateAdaptiveFollowUp(session, newDiff, 'escalate', systemPrompt);
+          session.nextAdaptiveQuestion = adaptiveQ;
+        }
+      } else if (shouldDeescalate(session.difficultyState, score)) {
+        const newDiff = getNextDifficulty(session.difficultyState.current, 'down');
+        if (newDiff !== session.difficultyState.current) {
+          const oldDiff = session.difficultyState.current;
+          session.difficultyState.current = newDiff;
+          session.difficultyState.consecutiveLowScores = 0;
+          session.difficultyState.escalationHistory.push(`Q${session.questionCount}: de-escalated to ${newDiff}`);
+          socket.emit('difficulty:changed', { from: oldDiff, to: newDiff, direction: 'down' });
+          
+          // Pre-generate adaptive follow-up
+          const systemPrompt = buildSystemPrompt(session);
+          const adaptiveQ = await generateAdaptiveFollowUp(session, newDiff, 'deescalate', systemPrompt);
+          session.nextAdaptiveQuestion = adaptiveQ;
+        }
+      }
+    }
       
   } catch (e) {
     console.error('Async scoring failed:', e);
+  }
+}
+
+interface SkillGapReport {
+  demonstrated: string[];
+  gaps: string[];
+  partiallyDemonstrated: string[];
+  recommendations: { skill: string; resource: string; priority: 'high' | 'medium' | 'low' }[];
+  overallReadiness: number;
+  verdict: string;
+}
+
+// Generate skill gap report on JD and interview answers
+async function generateSkillGapReport(session: SocketSession): Promise<SkillGapReport | null> {
+  if (!session.parsedJD) return null;
+
+  const answeredTopics = session.answers.map(a => `Q: ${a.questionText}\nA: ${a.transcript}`).join('\n');
+  const requiredSkills = session.parsedJD.requiredSkills;
+
+  console.log('📡 Generating skill gap report via OpenAI...');
+  const res = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{
+      role: 'user',
+      content: `Based on this interview, identify skill gaps vs the job requirements.
+      
+Required skills for the role: ${requiredSkills.join(', ')}
+Candidate's interview answers: ${answeredTopics.slice(0, 3000)}
+
+Return ONLY valid JSON:
+{
+  "demonstrated": ["skill1", "skill2"],
+  "gaps": ["skill3", "skill4"],
+  "partiallyDemonstrated": ["skill5"],
+  "recommendations": [
+    { "skill": "skill3", "resource": "specific course or topic to study", "priority": "high" }
+  ],
+  "overallReadiness": 85,
+  "verdict": "one sentence hiring recommendation"
+}`
+    }],
+    max_tokens: 600,
+    temperature: 0,
+    response_format: { type: 'json_object' }
+  });
+
+  try {
+    return JSON.parse(res.choices[0].message.content || 'null');
+  } catch (err) {
+    console.error('Failed to parse skill gap report:', err);
+    return null;
   }
 }
 
@@ -1534,13 +1704,20 @@ async function endSession(socket: any, session: SocketSession) {
     fluencyScore: radarScores.communication
   };
 
+  let skillGapReport: SkillGapReport | null = null;
+  if (session.parsedJD) {
+    skillGapReport = await generateSkillGapReport(session);
+  }
+
   try {
     await supabaseAdmin
       .from('sessions')
       .update({
         overall_score: averageScoreVal,
         radar_scores: radarScores,
-        communication_stats: communicationStats
+        communication_stats: communicationStats,
+        difficulty_journey: session.difficultyState?.escalationHistory || [],
+        skill_gap_report: skillGapReport
       })
       .eq('id', session.sessionId);
   } catch (err) {
@@ -1550,7 +1727,9 @@ async function endSession(socket: any, session: SocketSession) {
   const report = {
     overallScore: Math.round(averageScoreVal),
     radarScores,
-    communicationStats
+    communicationStats,
+    difficultyJourney: session.difficultyState?.escalationHistory || [],
+    skillGapReport
   };
 
   socket.emit('session:end', {
@@ -1595,27 +1774,44 @@ async function handleCandidateResponse(socket: any, session: SocketSession, tran
   let ttsStarted = false;
 
   try {
-    const systemPrompt = buildSystemPrompt(session.config, session.questionCount);
-    const apiMessages = [
-      { role: 'system', content: systemPrompt },
-      ...session.conversationHistory.map(h => ({
-        role: h.role === 'interviewer' ? 'assistant' : 'user',
-        content: h.content
-      }))
-    ];
+    if (session.nextAdaptiveQuestion) {
+      console.log('🔄 Injecting pre-generated adaptive question:', session.nextAdaptiveQuestion);
+      fullReply = session.nextAdaptiveQuestion;
+      session.nextAdaptiveQuestion = null; // Consume
 
-    const replyStream = streamGroqLlama(apiMessages);
+      // Simulate streaming tokens to the client
+      const words = fullReply.split(' ');
+      for (const word of words) {
+        socket.emit('interviewer:token', { token: word + ' ' });
+        await new Promise(r => setTimeout(r, 40));
+      }
 
-    for await (const token of replyStream) {
-      fullReply += token;
-      socket.emit('interviewer:token', { token });
+      firstSentence = fullReply.split(/[.?!]/)[0] + '.';
+      ttsStarted = true;
+      await streamTTSAndEmit(socket, firstSentence, session.config.voice || 'meera');
+    } else {
+      const systemPrompt = buildSystemPrompt(session);
+      const apiMessages = [
+        { role: 'system', content: systemPrompt },
+        ...session.conversationHistory.map(h => ({
+          role: h.role === 'interviewer' ? 'assistant' : 'user',
+          content: h.content
+        }))
+      ];
 
-      if (!ttsStarted && /[.?!]/.test(fullReply)) {
-        const match = fullReply.match(/^[^.?!]+[.?!]/);
-        if (match) {
-          firstSentence = match[0];
-          ttsStarted = true;
-          streamTTSAndEmit(socket, firstSentence, session.config.voice || 'meera');
+      const replyStream = streamGroqLlama(apiMessages);
+
+      for await (const token of replyStream) {
+        fullReply += token;
+        socket.emit('interviewer:token', { token });
+
+        if (!ttsStarted && /[.?!]/.test(fullReply)) {
+          const match = fullReply.match(/^[^.?!]+[.?!]/);
+          if (match) {
+            firstSentence = match[0];
+            ttsStarted = true;
+            streamTTSAndEmit(socket, firstSentence, session.config.voice || 'meera');
+          }
         }
       }
     }
@@ -1701,9 +1897,59 @@ voiceInterviewNamespace.on('connection', (socket) => {
 
       const sessionId = sessionData.id;
       const voicePref = sessionConfig.voice || 'meera';
-      
-      const firstQuestionText = `Hello! Welcome to your ${sessionConfig.difficulty} ${sessionConfig.domain} interview. Let's start with a brief introduction. Tell me about yourself and your background.`;
 
+      // Parse Resume and JD if provided (otherwise fetch stored resume if requested)
+      let parsedResume: ParsedResume | null = null;
+      let parsedJD: ParsedJD | null = null;
+      let questionBank: string[] = [];
+
+      if (sessionConfig.resumeText) {
+        parsedResume = await parseResume(sessionConfig.resumeText);
+        // Save to profiles
+        try {
+          await supabaseAdmin
+            .from('profiles')
+            .update({ parsed_resume: parsedResume, last_resume_uploaded_at: new Date() })
+            .eq('id', user.id);
+        } catch (dbErr) {
+          console.warn('Failed to update user profile with parsed resume:', dbErr);
+        }
+      } else if (sessionConfig.useStoredResume) {
+        try {
+          const { data } = await supabaseAdmin
+            .from('profiles')
+            .select('parsed_resume')
+            .eq('id', user.id)
+            .single();
+          if (data?.parsed_resume) {
+            parsedResume = data.parsed_resume;
+          }
+        } catch (dbErr) {
+          console.warn('Failed to fetch user stored resume:', dbErr);
+        }
+      }
+
+      if (sessionConfig.jdText) {
+        parsedJD = await parseJD(sessionConfig.jdText);
+      }
+
+      let firstQuestionText = `Hello! Welcome to your ${sessionConfig.difficulty} ${sessionConfig.domain} interview. Let's start with a brief introduction. Tell me about yourself and your background.`;
+
+      // Generate Personalized Question Bank
+      if (parsedResume || parsedJD) {
+        const questionsConfig = {
+          domain: sessionConfig.domain || 'General',
+          difficulty: sessionConfig.difficulty || 'Medium',
+          interviewType: sessionConfig.interviewType || 'TECHNICAL',
+          durationMinutes: sessionConfig.durationMinutes || 15,
+          maxQuestions: sessionConfig.maxQuestions || 5,
+        };
+        questionBank = await generatePersonalisedQuestions(questionsConfig, parsedResume, parsedJD);
+        if (questionBank.length > 0) {
+          firstQuestionText = questionBank[0];
+        }
+      }
+      
       // Set up SocketSession state
       const sessionState: SocketSession = {
         sessionId,
@@ -1720,7 +1966,17 @@ voiceInterviewNamespace.on('connection', (socket) => {
         audioBuffer: [],
         questionCount: 1,
         answers: [],
-        isProcessing: false
+        isProcessing: false,
+        parsedResume,
+        parsedJD,
+        difficultyState: {
+          current: (sessionConfig.difficulty || 'medium').toLowerCase() as any,
+          consecutiveHighScores: 0,
+          consecutiveLowScores: 0,
+          escalationHistory: []
+        },
+        nextAdaptiveQuestion: null,
+        questionBank
       };
 
       socketSessions.set(socket.id, sessionState);
@@ -1732,7 +1988,14 @@ voiceInterviewNamespace.on('connection', (socket) => {
         content: firstQuestionText
       });
 
-      socket.emit('session:ready', { sessionId, firstQuestion: firstQuestionText });
+      socket.emit('session:ready', { 
+        sessionId, 
+        firstQuestion: firstQuestionText,
+        candidateName: parsedResume?.name || null,
+        roleName: parsedJD?.roleName || null,
+        companyName: parsedJD?.companyName || null,
+        projectName: parsedResume?.topProjects?.[0]?.name || null
+      });
 
       // Play introductory question audio
       await streamTTSAndEmit(socket, firstQuestionText, voicePref);
