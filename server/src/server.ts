@@ -1345,6 +1345,7 @@ interface SocketSession {
   difficultyState?: DifficultyState;
   nextAdaptiveQuestion?: string | null;
   questionBank?: string[];
+  nonVerbalSummary?: any;
 }
 
 const socketSessions = new Map<string, SocketSession>();
@@ -1680,6 +1681,55 @@ Return ONLY valid JSON:
   }
 }
 
+// Generate non-verbal body language tips based on tracking metrics
+async function generateNonVerbalTips(summary: any): Promise<string[]> {
+  if (!summary) return [];
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === 'your-openai-api-key-here') {
+    return [
+      "Maintain consistent eye contact with the camera when presenting core concepts.",
+      "Vary expressions during transitions to appear more engaged and confident.",
+      "Keep your head centered and chin level to project maximum executive presence."
+    ];
+  }
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: `Give 3 specific, actionable body language improvement tips based on these interview metrics.
+Eye contact: ${summary.eyeContactPercent}%
+Dominant expression: ${summary.dominantExpression}
+Confidence score: ${summary.confidenceScore}
+Blink rate: ${summary.blinkRate}/min
+
+Return ONLY a JSON object with a single "tips" key containing an array of 3 strings:
+{
+  "tips": [
+    "tip description (max 20 words)",
+    "tip description (max 20 words)",
+    "tip description (max 20 words)"
+  ]
+}`
+      }],
+      max_tokens: 200,
+      temperature: 0.6,
+      response_format: { type: 'json_object' }
+    });
+
+    const parsed = JSON.parse(res.choices[0].message.content || '{"tips":[]}');
+    return parsed.tips || [];
+  } catch (err) {
+    console.error('Failed to generate non-verbal tips:', err);
+    return [
+      "Maintain consistent eye contact with the camera when presenting core concepts.",
+      "Vary expressions during transitions to appear more engaged and confident.",
+      "Keep your head centered and chin level to project maximum executive presence."
+    ];
+  }
+}
+
 // Complete early or scheduled interview
 async function endSession(socket: any, session: SocketSession) {
   console.log(`Ending session ${session.sessionId}...`);
@@ -1709,6 +1759,12 @@ async function endSession(socket: any, session: SocketSession) {
     skillGapReport = await generateSkillGapReport(session);
   }
 
+  let nonVerbalTips: string[] = [];
+  if (session.nonVerbalSummary) {
+    nonVerbalTips = await generateNonVerbalTips(session.nonVerbalSummary);
+    session.nonVerbalSummary.tips = nonVerbalTips;
+  }
+
   try {
     await supabaseAdmin
       .from('sessions')
@@ -1717,7 +1773,8 @@ async function endSession(socket: any, session: SocketSession) {
         radar_scores: radarScores,
         communication_stats: communicationStats,
         difficulty_journey: session.difficultyState?.escalationHistory || [],
-        skill_gap_report: skillGapReport
+        skill_gap_report: skillGapReport,
+        non_verbal_summary: session.nonVerbalSummary || null
       })
       .eq('id', session.sessionId);
   } catch (err) {
@@ -1729,7 +1786,8 @@ async function endSession(socket: any, session: SocketSession) {
     radarScores,
     communicationStats,
     difficultyJourney: session.difficultyState?.escalationHistory || [],
-    skillGapReport
+    skillGapReport,
+    nonVerbalSummary: session.nonVerbalSummary || null
   };
 
   socket.emit('session:end', {
@@ -1847,7 +1905,8 @@ async function handleCandidateResponse(socket: any, session: SocketSession, tran
                               fullReply.toLowerCase().includes('conclusion of our interview');
 
   if (isConclusionMessage || session.questionCount >= session.config.maxQuestions) {
-    await endSession(socket, session);
+    console.log('Session end condition met. Informing client to submit final metrics...');
+    socket.emit('session:pre-end', { sessionId: session.sessionId });
     return;
   }
 
@@ -2074,11 +2133,24 @@ voiceInterviewNamespace.on('connection', (socket) => {
     await streamTTSAndEmit(socket, textToRepeat, session.config.voice || 'meera');
   });
 
-  socket.on('control:end', async () => {
+  socket.on('control:end', async (payload?: { nonVerbalSummary?: any }) => {
     const session = socketSessions.get(socket.id);
     if (!session) return;
 
+    if (payload?.nonVerbalSummary) {
+      session.nonVerbalSummary = payload.nonVerbalSummary;
+    }
+
     console.log('Ending interview session prematurely...');
+    await endSession(socket, session);
+  });
+
+  socket.on('session:complete', async (payload: { nonVerbalSummary: any }) => {
+    const session = socketSessions.get(socket.id);
+    if (!session) return;
+
+    session.nonVerbalSummary = payload.nonVerbalSummary;
+    console.log('Completing interview session naturally...');
     await endSession(socket, session);
   });
 

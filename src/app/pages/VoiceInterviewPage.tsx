@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef, useReducer } from 'react';
+import { useState, useEffect, useRef, useReducer, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { supabase } from '../../utils/supabase';
 import { useVoiceCapture } from '../../hooks/useVoiceCapture';
 import { useCountUp } from '../../hooks/useCountUp';
-import { InterviewerAvatar, AudioVisualizer, PageLoader } from '../components';
-import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft } from 'lucide-react';
+import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal } from '../components';
+import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft, Video } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
+import { useNonVerbalAnalysis, NonVerbalSummary } from '../../hooks/useNonVerbalAnalysis';
+import { isMediaPipeAvailable } from '../../utils/featureFlags';
 
 // State Machine Definition
 type Phase = 'connecting' | 'ready' | 'listening' | 'processing' | 'speaking' | 'ended';
@@ -138,8 +140,36 @@ export default function VoiceInterviewPage() {
   const [highlightAvatar, setHighlightAvatar] = useState(false);
   const [escalationHistory, setEscalationHistory] = useState<string[]>([]);
 
-  // Fetch token on mount
+  // Webcam & Non-Verbal Analysis States
+  const [mediaPipeReady, setMediaPipeReady] = useState(false);
+  const [webcamEnabled, setWebcamEnabled] = useState(false);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [showMobileSheet, setShowMobileSheet] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const { metrics, startAnalysis, stopAnalysis } = useNonVerbalAnalysis(videoRef, webcamEnabled);
+  const [nonVerbalSummary, setNonVerbalSummary] = useState<NonVerbalSummary | null>(null);
+
+  // Fetch token and feature flags on mount
   useEffect(() => {
+    isMediaPipeAvailable().then((available) => {
+      setMediaPipeReady(available);
+      if (available) {
+        supabase.auth.getSession().then(async ({ data }) => {
+          if (data.session?.user) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('camera_enabled_preference')
+              .eq('id', data.session.user.id)
+              .single();
+            if (profile?.camera_enabled_preference) {
+              setShowPermissionModal(true);
+            }
+          }
+        });
+      }
+    });
+
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
         setToken(data.session.access_token);
@@ -309,6 +339,10 @@ export default function VoiceInterviewPage() {
 
     socket.on('session:end', (data: { sessionId: string; finalReport: any }) => {
       dispatch({ type: 'SESSION_ENDED' });
+      // Stop webcam and release tracks if active
+      if (webcamEnabled && cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
       // Navigate to Results page
       navigate('/interview-results', {
         state: {
@@ -318,12 +352,20 @@ export default function VoiceInterviewPage() {
           questions: data.finalReport.detailedQuestionAnalysis || [],
           difficultyJourney: data.finalReport.difficultyJourney || escalationHistory,
           skillGapReport: data.finalReport.skillGapReport || null,
+          nonVerbalSummary: data.finalReport.nonVerbalSummary || null,
           interviewConfig: {
             role: interviewConfig.domain || 'Backend',
             difficulty: interviewConfig.difficulty || 'Medium'
           }
         }
       });
+    });
+
+    socket.on('session:pre-end', () => {
+      console.log('Session pre-end triggered, retrieving non-verbal summary...');
+      const summary = stopAnalysis();
+      setNonVerbalSummary(summary);
+      socket.emit('session:complete', { nonVerbalSummary: summary });
     });
 
     socket.on('error', (err: any) => {
@@ -333,7 +375,7 @@ export default function VoiceInterviewPage() {
     return () => {
       socket.disconnect();
     };
-  }, [token, escalationHistory]);
+  }, [token, escalationHistory, webcamEnabled, cameraStream, stopAnalysis]);
 
   // Avatar border glow highlight triggers when candidate's name or project is referenced
   useEffect(() => {
@@ -376,6 +418,28 @@ export default function VoiceInterviewPage() {
     }
   }, [phase, startMic, stopMic]);
 
+  // Camera Grant and Disable Handlers
+  const handleCameraGrant = (stream: MediaStream) => {
+    setCameraStream(stream);
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+    setWebcamEnabled(true);
+    startAnalysis();
+  };
+
+  const handleCameraDisable = () => {
+    setWebcamEnabled(false);
+    stopAnalysis();
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
   // Action Controllers
   const handleSkip = () => {
     if (socketRef.current?.connected) {
@@ -393,7 +457,9 @@ export default function VoiceInterviewPage() {
   const handleEnd = () => {
     if (window.confirm('Are you sure you want to end this mock interview early?')) {
       if (socketRef.current?.connected) {
-        socketRef.current.emit('control:end');
+        const summary = stopAnalysis();
+        setNonVerbalSummary(summary);
+        socketRef.current.emit('control:end', { nonVerbalSummary: summary });
         dispatch({ type: 'AUDIO_RECEIVED' });
       }
     }
@@ -456,7 +522,7 @@ export default function VoiceInterviewPage() {
       </header>
 
       {/* Main Board */}
-      <div className="flex-1 max-w-4xl w-full mx-auto px-6 py-8 flex flex-col justify-between relative z-10 gap-8 min-h-0">
+      <div className="flex-1 max-w-7xl w-full mx-auto px-6 py-6 flex flex-col justify-between relative z-10 gap-6 min-h-0">
         
         {/* Progress Line */}
         <div className="flex flex-col gap-2">
@@ -472,171 +538,260 @@ export default function VoiceInterviewPage() {
           </div>
         </div>
 
-        {/* Avatar and Visualizer Section */}
-        <div className="flex flex-col items-center justify-center flex-1 gap-6 my-auto">
-          <div className="relative">
-            <InterviewerAvatar 
-              state={getAvatarState()} 
-              name="Arjun"
-              voice={interviewConfig.voice || 'meera'}
-              highlight={highlightAvatar}
-            />
-            {phase === 'listening' && (
-              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-            )}
+        {/* 3-Column Content Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 items-center min-h-0">
+          
+          {/* Column 1: Interviewer Avatar (Left) */}
+          <div className="lg:col-span-3 flex flex-col items-center justify-center gap-6">
+            <div className="relative">
+              <InterviewerAvatar 
+                state={getAvatarState()} 
+                name="Arjun"
+                voice={interviewConfig.voice || 'meera'}
+                highlight={highlightAvatar}
+              />
+              {phase === 'listening' && (
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              )}
+            </div>
+
+            <div className="h-10 w-full max-w-xs flex items-center justify-center">
+              <AudioVisualizer isActive={phase === 'listening' || phase === 'speaking'} />
+            </div>
           </div>
 
-          <div className="h-10 w-full max-w-xs flex items-center justify-center">
-            <AudioVisualizer isActive={phase === 'listening' || phase === 'speaking'} />
-          </div>
-        </div>
-
-        {/* Conversations Box */}
-        <div className="glass-panel p-6 bg-surface-2/30 border border-glass-border flex-1 max-h-[220px] overflow-y-auto flex flex-col gap-4 min-h-[140px] rounded-2xl scrollbar-thin">
-          <AnimatePresence mode="wait">
-            {phase === 'connecting' && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="text-center text-sm text-text-secondary py-6 flex flex-col items-center gap-3"
-              >
-                <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                <span>Establishing real-time connection to AI Interviewer...</span>
-              </motion.div>
-            )}
-
-            {error && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-start gap-3 p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs leading-relaxed"
-              >
-                <AlertTriangle size={18} className="flex-shrink-0" />
-                <div>
-                  <h4 className="font-bold text-white mb-1">Connection Issue</h4>
-                  <p>{error}</p>
-                </div>
-              </motion.div>
-            )}
-
-            {!error && phase !== 'connecting' && (
-              <div className="flex flex-col gap-4 w-full">
-                {/* Interviewer Text bubble */}
-                {interviewerText && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex gap-2.5 items-start"
-                  >
-                    <div className="w-6 h-6 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
-                      AI
-                    </div>
-                    <div className="text-sm font-semibold text-white leading-relaxed pr-6 relative">
-                      {interviewerText}
-                      {phase === 'speaking' && (
-                        <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse" />
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* Candidate Response Transcript */}
-                {candidateText && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex gap-2.5 items-start justify-end"
-                  >
-                    <div className="text-sm text-text-secondary font-medium leading-relaxed pl-6 text-right">
-                      {candidateText}
-                    </div>
-                    <div className="w-6 h-6 rounded-lg bg-white/10 text-white flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
-                      YOU
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* Processing Spinner */}
-                {phase === 'processing' && (
+          {/* Column 2: Conversational Loop & Controls (Center) */}
+          <div className="lg:col-span-6 flex flex-col justify-between gap-6 h-full min-h-0 py-4">
+            {/* Conversations Box */}
+            <div className="glass-panel p-6 bg-surface-2/30 border border-glass-border flex-1 max-h-[300px] overflow-y-auto flex flex-col gap-4 min-h-[140px] rounded-2xl scrollbar-thin">
+              <AnimatePresence mode="wait">
+                {phase === 'connecting' && (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="flex items-center gap-2 text-xs text-text-secondary ml-8"
+                    exit={{ opacity: 0 }}
+                    className="text-center text-sm text-text-secondary py-6 flex flex-col items-center gap-3"
                   >
-                    <div className="w-3.5 h-3.5 border border-primary border-t-transparent rounded-full animate-spin" />
-                    <span>AI Interviewer is processing your answer...</span>
+                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span>Establishing real-time connection to AI Interviewer...</span>
                   </motion.div>
                 )}
-              </div>
-            )}
-          </AnimatePresence>
-        </div>
 
-        {/* Action Controls Deck */}
-        <div className="flex flex-col gap-4 items-center">
-          {/* Status Label */}
-          <div className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">
-            {phase === 'listening' ? 'Speaking ... silence ends question' : phase === 'speaking' ? 'Interviewer speaking' : 'Wait...'}
-          </div>
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="flex items-start gap-3 p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400 text-xs leading-relaxed"
+                  >
+                    <AlertTriangle size={18} className="flex-shrink-0" />
+                    <div>
+                      <h4 className="font-bold text-white mb-1">Connection Issue</h4>
+                      <p>{error}</p>
+                    </div>
+                  </motion.div>
+                )}
 
-          <div className="flex items-center gap-4">
-            {/* Repeat button */}
-            <button
-              onClick={handleRepeat}
-              disabled={phase !== 'listening'}
-              className="w-12 h-12 rounded-2xl border border-glass-border bg-surface-2 hover:bg-white/5 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:pointer-events-none hover:-translate-y-0.5"
-              title="Repeat last question"
-            >
-              <RotateCcw size={16} />
-            </button>
+                {!error && phase !== 'connecting' && (
+                  <div className="flex flex-col gap-4 w-full">
+                    {/* Interviewer Text bubble */}
+                    {interviewerText && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex gap-2.5 items-start"
+                      >
+                        <div className="w-6 h-6 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
+                          AI
+                        </div>
+                        <div className="text-sm font-semibold text-white leading-relaxed pr-6 relative">
+                          {interviewerText}
+                          {phase === 'speaking' && (
+                            <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse" />
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
 
-            {/* Microphone State Button */}
-            <div className="relative">
-              <div
-                className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${
-                  phase === 'listening' ? 'bg-emerald-500 scale-110' : 'bg-primary'
-                }`}
-              />
-              <button
-                disabled={true} // VAD runs automatically, mic button serves as status
-                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all z-10 relative cursor-default ${
-                  phase === 'listening'
-                    ? 'bg-emerald-500 text-white shadow-[0_4px_16px_rgba(16,185,129,0.3)]'
-                    : 'bg-primary/20 text-primary border border-primary/30'
-                }`}
-              >
-                {phase === 'listening' ? <Mic size={24} /> : <MicOff size={24} />}
-              </button>
+                    {/* Candidate Response Transcript */}
+                    {candidateText && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex gap-2.5 items-start justify-end"
+                      >
+                        <div className="text-sm text-text-secondary font-medium leading-relaxed pl-6 text-right">
+                          {candidateText}
+                        </div>
+                        <div className="w-6 h-6 rounded-lg bg-white/10 text-white flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
+                          YOU
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Processing Spinner */}
+                    {phase === 'processing' && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex items-center gap-2 text-xs text-text-secondary ml-8"
+                      >
+                        <div className="w-3.5 h-3.5 border border-primary border-t-transparent rounded-full animate-spin" />
+                        <span>AI Interviewer is processing your answer...</span>
+                      </motion.div>
+                    )}
+                  </div>
+                )}
+              </AnimatePresence>
             </div>
 
-            {/* Skip Button */}
-            <button
-              onClick={handleSkip}
-              disabled={phase !== 'listening'}
-              className="w-12 h-12 rounded-2xl border border-glass-border bg-surface-2 hover:bg-white/5 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:pointer-events-none hover:-translate-y-0.5"
-              title="Skip question"
-            >
-              <SkipForward size={16} />
-            </button>
+            {/* Action Controls Deck */}
+            <div className="flex flex-col gap-4 items-center">
+              {/* Status Label */}
+              <div className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">
+                {phase === 'listening' ? 'Speaking ... silence ends question' : phase === 'speaking' ? 'Interviewer speaking' : 'Wait...'}
+              </div>
+
+              <div className="flex items-center gap-4">
+                {/* Repeat button */}
+                <button
+                  onClick={handleRepeat}
+                  disabled={phase !== 'listening'}
+                  className="w-12 h-12 rounded-2xl border border-glass-border bg-surface-2 hover:bg-white/5 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:pointer-events-none hover:-translate-y-0.5"
+                  title="Repeat last question"
+                >
+                  <RotateCcw size={16} />
+                </button>
+
+                {/* Microphone State Button */}
+                <div className="relative">
+                  <div
+                    className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${
+                      phase === 'listening' ? 'bg-emerald-500 scale-110' : 'bg-primary'
+                    }`}
+                  />
+                  <button
+                    disabled={true}
+                    className={`w-16 h-16 rounded-full flex items-center justify-center transition-all z-10 relative cursor-default ${
+                      phase === 'listening'
+                        ? 'bg-emerald-500 text-white shadow-[0_4px_16px_rgba(16,185,129,0.3)]'
+                        : 'bg-primary/20 text-primary border border-primary/30'
+                    }`}
+                  >
+                    {phase === 'listening' ? <Mic size={24} /> : <MicOff size={24} />}
+                  </button>
+                </div>
+
+                {/* Skip Button */}
+                <button
+                  onClick={handleSkip}
+                  disabled={phase !== 'listening'}
+                  className="w-12 h-12 rounded-2xl border border-glass-border bg-surface-2 hover:bg-white/5 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:pointer-events-none hover:-translate-y-0.5"
+                  title="Skip question"
+                >
+                  <SkipForward size={16} />
+                </button>
+              </div>
+
+              {/* End Session Button */}
+              {phase !== 'connecting' && (
+                <button
+                  onClick={handleEnd}
+                  className="mt-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors px-4 py-2 border border-red-500/10 rounded-xl hover:bg-red-500/5"
+                >
+                  <StopCircle size={14} />
+                  End Interview
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* End Session Button */}
-          {phase !== 'connecting' && (
-            <button
-              onClick={handleEnd}
-              className="mt-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition-colors px-4 py-2 border border-red-500/10 rounded-xl hover:bg-red-500/5"
-            >
-              <StopCircle size={14} />
-              End Interview
-            </button>
+          {/* Column 3: Webcam Panel (Right) - Desktop Only */}
+          {mediaPipeReady && (
+            <div className="hidden lg:flex lg:col-span-3 justify-center">
+              <WebcamPanel
+                isActive={phase === 'listening' || phase === 'speaking' || phase === 'processing'}
+                metrics={metrics}
+                onEnable={() => setShowPermissionModal(true)}
+                onDisable={handleCameraDisable}
+                isEnabled={webcamEnabled}
+                videoRef={videoRef}
+              />
+            </div>
           )}
         </div>
-
       </div>
+
+      {/* Floating Camera Button (Mobile View) */}
+      {mediaPipeReady && (
+        <div className="lg:hidden fixed bottom-6 right-6 z-40">
+          <button
+            onClick={() => {
+              if (!webcamEnabled) {
+                setShowPermissionModal(true);
+              } else {
+                setShowMobileSheet(true);
+              }
+            }}
+            className="w-12 h-12 rounded-full bg-primary hover:bg-primary/95 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
+            title="Toggle Camera Analysis"
+          >
+            <Video size={20} />
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Bottom Sheet */}
+      <AnimatePresence>
+        {showMobileSheet && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMobileSheet(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="absolute bottom-0 left-0 right-0 bg-[#121216] border-t border-glass-border rounded-t-3xl p-6 flex flex-col items-center gap-4"
+            >
+              <div className="w-12 h-1.5 bg-white/10 rounded-full mb-2 cursor-pointer" onClick={() => setShowMobileSheet(false)} />
+              <h3 className="text-white font-bold text-sm" style={{ fontFamily: "'Montserrat', sans-serif" }}>Camera Analysis</h3>
+              <WebcamPanel
+                isActive={phase === 'listening' || phase === 'speaking' || phase === 'processing'}
+                metrics={metrics}
+                onEnable={() => setShowPermissionModal(true)}
+                onDisable={() => {
+                  handleCameraDisable();
+                  setShowMobileSheet(false);
+                }}
+                isEnabled={webcamEnabled}
+                videoRef={videoRef}
+              />
+              <button
+                onClick={() => setShowMobileSheet(false)}
+                className="mt-2 text-xs font-bold text-text-secondary hover:text-white transition-colors"
+              >
+                Close Panel
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Camera Privacy & Permission Modal */}
+      <CameraPermissionModal
+        open={showPermissionModal}
+        onClose={() => setShowPermissionModal(false)}
+        onGrant={handleCameraGrant}
+      />
     </div>
   );
 }
+

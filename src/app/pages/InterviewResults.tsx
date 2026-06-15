@@ -559,7 +559,7 @@ function getScoreGrade(score: number) {
   return { grade: 'F', color: 'bg-red-500/10 text-red-400 border-red-500/25' };
 }
 
-function computeRadarScores(evaluations: any[], communicationAnalytics: any[]) {
+function computeRadarScores(evaluations: any[], communicationAnalytics: any[], nonVerbalSummary?: any) {
   const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
   
   let wpm = 135;
@@ -601,7 +601,7 @@ function computeRadarScores(evaluations: any[], communicationAnalytics: any[]) {
     return (e.score ?? e.final_score ?? 0);
   });
 
-  return {
+  const baseScores: any = {
     technicalAccuracy: Math.round(Math.min(100, avg(technicalScores) || 85)),
     communication: Math.round(Math.min(100, fluencyScore)),
     problemSolving: Math.round(Math.min(100, avg(problemSolvingScores) || 80)),
@@ -609,6 +609,13 @@ function computeRadarScores(evaluations: any[], communicationAnalytics: any[]) {
     relevance: Math.round(Math.min(100, avg(relevanceScores) || 85)),
     structure: Math.round(Math.min(100, avg(structureScores) || 80))
   };
+
+  if (nonVerbalSummary) {
+    baseScores.presence = nonVerbalSummary.presenceScore ?? 0;
+    baseScores.eyeContact = nonVerbalSummary.eyeContactPercent ?? 0;
+  }
+
+  return baseScores;
 }
 
 function DimensionRow({ label, score }: { label: string, score: number }) {
@@ -836,7 +843,8 @@ export default function InterviewResults() {
             metrics: calculateMetrics(mappedEvaluations),
             questions: mappedQuestions,
             difficultyJourney: session.difficulty_journey || [],
-            skillGapReport: session.skill_gap_report || null
+            skillGapReport: session.skill_gap_report || null,
+            nonVerbalSummary: session.non_verbal_summary || null
           };
 
           setDbResultData(mappedResult);
@@ -848,6 +856,8 @@ export default function InterviewResults() {
             confidence: session.radar_scores?.confidence || 80,
             relevance: session.radar_scores?.relevance || 80,
             structure: session.radar_scores?.structure || 80,
+            presence: session.radar_scores?.presence,
+            eyeContact: session.radar_scores?.eyeContact,
           };
           setDbRadarScores(calculatedRadar);
           
@@ -872,6 +882,7 @@ export default function InterviewResults() {
                 communicationAnalytics: session.communication_stats ? [session.communication_stats] : [],
                 difficultyJourney: session.difficulty_journey || [],
                 skillGapReport: session.skill_gap_report || null,
+                nonVerbalSummary: session.non_verbal_summary || null,
                 interviewConfig: {
                   role: mappedResult.role,
                   difficulty: session.difficulty || 'medium',
@@ -902,6 +913,7 @@ export default function InterviewResults() {
               strengths: localSession.fullData?.evaluations ? extractStrengths(localSession.fullData.evaluations) : [],
               difficultyJourney: localSession.fullData?.difficultyJourney || [],
               skillGapReport: localSession.fullData?.skillGapReport || null,
+              nonVerbalSummary: localSession.fullData?.nonVerbalSummary || null,
               questions: (localSession.fullData?.questions || []).map((q: any, idx: number) => ({
                 id: idx + 1,
                 question: q.question || '',
@@ -916,7 +928,8 @@ export default function InterviewResults() {
 
             const calculatedRadar = computeRadarScores(
               localSession.fullData?.evaluations || [],
-              localSession.fullData?.communicationAnalytics || []
+              localSession.fullData?.communicationAnalytics || [],
+              localSession.fullData?.nonVerbalSummary || null
             );
             setDbRadarScores(calculatedRadar);
             return;
@@ -966,11 +979,12 @@ export default function InterviewResults() {
       strengths: evaluations[idx]?.strengths || [],
     })),
     difficultyJourney: location.state?.difficultyJourney || [],
-    skillGapReport: location.state?.skillGapReport || null
+    skillGapReport: location.state?.skillGapReport || null,
+    nonVerbalSummary: location.state?.nonVerbalSummary || null
   } : mockResultData;
 
   const localRadarScores = passedOverallScore !== undefined
-    ? computeRadarScores(evaluations, communicationAnalytics)
+    ? computeRadarScores(evaluations, communicationAnalytics, location.state?.nonVerbalSummary || null)
     : {
         technicalAccuracy: 92,
         communication: 85,
@@ -1343,11 +1357,16 @@ ${questionsText}
         {/* Section B — Radar chart + per-dimension breakdown */}
         <div className="glass-panel p-6 lg:p-8 mb-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
           {/* Left half: RadarChart centered, size=300 */}
-          <div className="lg:col-span-6 flex justify-center">
+          <div className="lg:col-span-6 flex flex-col items-center gap-4">
             <RadarChart scores={radarScores} size={300} animated={true} />
+            {!resultData.nonVerbalSummary && (
+              <p className="text-[10.5px] font-semibold text-text-secondary text-center mt-2 border border-glass-border/30 bg-white/5 rounded-xl px-4 py-2">
+                💡 Enable camera in your next session to unlock Presence & Eye Contact scores
+              </p>
+            )}
           </div>
           
-          {/* Right half: 6 metric rows */}
+          {/* Right half: 6 or 8 metric rows */}
           <div className="lg:col-span-6 flex flex-col gap-5">
             <h3 className="text-lg font-bold text-white mb-2" style={{ fontFamily: "'Montserrat', sans-serif" }}>
               Performance Metrics
@@ -1359,6 +1378,12 @@ ${questionsText}
               <DimensionRow label="Confidence" score={radarScores.confidence} />
               <DimensionRow label="Relevance" score={radarScores.relevance} />
               <DimensionRow label="Structure" score={radarScores.structure} />
+              {resultData.nonVerbalSummary && (
+                <>
+                  <DimensionRow label="Presence" score={radarScores.presence || 0} />
+                  <DimensionRow label="Eye Contact" score={radarScores.eyeContact || 0} />
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1435,6 +1460,164 @@ ${questionsText}
                 </span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Body Language & Presence Analysis Section */}
+        {resultData.nonVerbalSummary && (
+          <div className="glass-panel p-6 lg:p-8 mb-8 border-[#00CEC9]/15">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles size={20} className="text-[#00CEC9]" />
+              <h3 className="text-xl font-bold text-white font-montserrat">
+                🎭 Body Language & Presence Analysis
+              </h3>
+            </div>
+            <p className="text-xs text-text-secondary mb-6 leading-relaxed">
+              Analysed locally on your device — no video was recorded or stored.
+            </p>
+
+            {/* Row 1 — 4 metric cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              {/* Eye Contact Card */}
+              <div className="p-5 rounded-2xl border border-glass-border bg-surface-2/40 flex flex-col items-center text-center">
+                <span className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-3">Eye Contact</span>
+                <span 
+                  className="text-3xl font-extrabold mb-1"
+                  style={{
+                    color: resultData.nonVerbalSummary.eyeContactPercent >= 70 ? "#10B981" 
+                         : resultData.nonVerbalSummary.eyeContactPercent >= 50 ? "#F59E0B" : "#EF4444"
+                  }}
+                >
+                  {resultData.nonVerbalSummary.eyeContactPercent}%
+                </span>
+                <span className="text-[10px] text-text-secondary font-medium">of session</span>
+              </div>
+
+              {/* Dominant Expression Card */}
+              <div className="p-5 rounded-2xl border border-glass-border bg-surface-2/40 flex flex-col items-center text-center">
+                <span className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-3">Dominant Expression</span>
+                
+                {/* SVG Face representation */}
+                <div className="w-9 h-9 mb-2 flex items-center justify-center">
+                  {resultData.nonVerbalSummary.dominantExpression === "confident" ? (
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-emerald-400 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                      <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                      <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                    </svg>
+                  ) : resultData.nonVerbalSummary.dominantExpression === "uncertain" ? (
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-amber-400 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 16h.01" strokeWidth="3" />
+                      <path d="M8 12s1.5-1.5 4-1.5 4 1.5 4 1.5" />
+                      <path d="M9 9c.5-.5 1.5-.5 2 0" />
+                      <path d="M15 9c-.5-.5-1.5-.5-2 0" />
+                    </svg>
+                  ) : resultData.nonVerbalSummary.dominantExpression === "stressed" ? (
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-red-400 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M16 16s-1.5-2-4-2-4 2-4 2" />
+                      <path d="M9 10c-.5-.5-1.5-1-2-.5" />
+                      <path d="M15 10c.5-.5 1.5-1 2-.5" />
+                      <line x1="9" y1="11" x2="9.01" y2="11" strokeWidth="3" />
+                      <line x1="15" y1="11" x2="15.01" y2="11" strokeWidth="3" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-slate-400 fill-none stroke-current" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="8" y1="15" x2="16" y2="15" />
+                      <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="3" />
+                      <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="3" />
+                    </svg>
+                  )}
+                </div>
+                <span className="text-xs font-bold text-white capitalize">{resultData.nonVerbalSummary.dominantExpression}</span>
+                <span className="text-[9px] text-text-secondary mt-0.5 font-medium">most of session</span>
+              </div>
+
+              {/* Blink Rate Card */}
+              <div className="p-5 rounded-2xl border border-glass-border bg-surface-2/40 flex flex-col items-center text-center">
+                <span className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-3">Blink Rate</span>
+                <span 
+                  className="text-3xl font-extrabold mb-1"
+                  style={{
+                    color: (resultData.nonVerbalSummary.blinkRate < 10 || resultData.nonVerbalSummary.blinkRate > 30) ? "#F59E0B" : "#10B981"
+                  }}
+                >
+                  {resultData.nonVerbalSummary.blinkRate}/min
+                </span>
+                <span className="text-[10px] text-text-secondary font-medium">Normal: 15-20/min</span>
+              </div>
+
+              {/* Presence Score Card */}
+              <div className="p-5 rounded-2xl border border-glass-border bg-surface-2/40 flex flex-col items-center text-center">
+                <span className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Overall Presence</span>
+                <div className="relative w-16 h-16 flex items-center justify-center">
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle cx="32" cy="32" r="28" fill="transparent" stroke="rgba(255,255,255,0.05)" strokeWidth="4" />
+                    <circle cx="32" cy="32" r="28" fill="transparent" stroke="#00CEC9" strokeWidth="4"
+                      strokeDasharray={2 * Math.PI * 28}
+                      strokeDashoffset={2 * Math.PI * 28 * (1 - resultData.nonVerbalSummary.presenceScore / 100)}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <span className="absolute text-sm font-extrabold text-white">{resultData.nonVerbalSummary.presenceScore}%</span>
+                </div>
+                <span className="text-[10px] text-text-secondary font-medium mt-2">Presence Score</span>
+              </div>
+            </div>
+
+            {/* Row 2 — Eye Contact Timeline */}
+            {resultData.nonVerbalSummary.eyeContactTimeline && resultData.nonVerbalSummary.eyeContactTimeline.length > 0 && (
+              <div className="mb-8 p-5 rounded-2xl border border-glass-border bg-surface-2/20">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-4">
+                  ⏱️ Eye Contact Timeline (rolling second-by-second)
+                </h4>
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto mb-3">
+                  {resultData.nonVerbalSummary.eyeContactTimeline.map((looking: boolean, idx: number) => (
+                    <div 
+                      key={idx} 
+                      className={`w-[5px] h-6 rounded-md flex-shrink-0 ${looking ? "bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.4)]" : "bg-red-500"}`}
+                      title={`Second ${idx + 1}: ${looking ? 'Eye contact' : 'Looking away'}`}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-4 text-[10px] text-text-secondary font-semibold">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    <span>Eye contact maintained</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <span>Looking away</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Row 3 — Tips pill rows */}
+            {resultData.nonVerbalSummary.tips && resultData.nonVerbalSummary.tips.length > 0 && (
+              <div className="flex flex-col gap-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-text-secondary mb-1">
+                  💡 Body Language Recommendations
+                </h4>
+                <div className="flex flex-col gap-3">
+                  {resultData.nonVerbalSummary.tips.map((tip: string, idx: number) => (
+                    <motion.div
+                      key={idx}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.1, type: "spring", stiffness: 100 }}
+                      className="p-4 rounded-xl border border-primary/20 bg-primary/5 flex items-start gap-3"
+                    >
+                      <Lightbulb size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs font-semibold text-white leading-relaxed">{tip}</p>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

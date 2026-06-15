@@ -8,6 +8,8 @@ export interface RadarScores {
   confidence: number;
   relevance: number;
   structure: number;
+  presence?: number;
+  eyeContact?: number;
 }
 
 interface RadarChartProps {
@@ -15,6 +17,7 @@ interface RadarChartProps {
   comparisonScores?: RadarScores;
   size?: number;
   animated?: boolean;
+  axes?: 6 | 8;
 }
 
 export default function RadarChart({
@@ -22,12 +25,21 @@ export default function RadarChart({
   comparisonScores,
   size = 320,
   animated = true,
+  axes = (scores.presence !== undefined && scores.eyeContact !== undefined) ? 8 : 6,
 }: RadarChartProps) {
   const center = size / 2;
   const radius = size * 0.38;
-  const axes = 6;
 
-  const keys: (keyof RadarScores)[] = [
+  const keys: (keyof RadarScores)[] = axes === 8 ? [
+    "technicalAccuracy",
+    "communication",
+    "problemSolving",
+    "confidence",
+    "relevance",
+    "structure",
+    "presence",
+    "eyeContact",
+  ] : [
     "technicalAccuracy",
     "communication",
     "problemSolving",
@@ -36,7 +48,16 @@ export default function RadarChart({
     "structure",
   ];
 
-  const labels = [
+  const labels = axes === 8 ? [
+    "Technical",
+    "Communication",
+    "Problem solving",
+    "Confidence",
+    "Relevance",
+    "Structure",
+    "Presence",
+    "Eye contact",
+  ] : [
     "Technical",
     "Communication",
     "Problem solving",
@@ -54,7 +75,7 @@ export default function RadarChart({
     isComparison?: boolean;
   } | null>(null);
 
-  // Generate grid points for concentric hexagons
+  // Generate grid points for concentric hexagons/octagons
   const getGridPoints = (level: number) => {
     const points = [];
     for (let i = 0; i < axes; i++) {

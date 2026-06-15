@@ -7,5 +7,8 @@ export { default as TrendChart } from "./analytics/TrendChart";
 export { default as PageLoader } from "./ui/PageLoader";
 export { default as ErrorBoundary } from "./ui/ErrorBoundary";
 export { default as ProtectedRoute } from "./auth/ProtectedRoute";
+export { default as WebcamPanel } from "./interview/WebcamPanel";
+export { default as CameraPermissionModal } from "./interview/CameraPermissionModal";
+
 
 
