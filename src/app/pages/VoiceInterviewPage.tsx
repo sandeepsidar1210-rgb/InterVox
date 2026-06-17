@@ -5,7 +5,7 @@ import { io, Socket } from 'socket.io-client';
 import { supabase } from '../../utils/supabase';
 import { useVoiceCapture } from '../../hooks/useVoiceCapture';
 import { useCountUp } from '../../hooks/useCountUp';
-import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal } from '../components';
+import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal, GridBackground } from '../components';
 import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft, Video } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import { useNonVerbalAnalysis, NonVerbalSummary } from '../../hooks/useNonVerbalAnalysis';
