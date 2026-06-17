@@ -15,8 +15,10 @@ import { DifficultyState, shouldEscalate, shouldDeescalate, getNextDifficulty, g
 
 dotenv.config();
 
-// Initialize Supabase Admin Client
-const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder-url.supabase.co';
+let supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder-url.supabase.co';
+if (!supabaseUrl.startsWith('http://') && !supabaseUrl.startsWith('https://')) {
+  supabaseUrl = 'https://placeholder-url.supabase.co';
+}
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-service-role-key';
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
 
