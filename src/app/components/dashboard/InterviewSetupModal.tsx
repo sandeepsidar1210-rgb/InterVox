@@ -339,7 +339,7 @@ export function InterviewSetupModal({ onClose }: InterviewSetupModalProps) {
                             }}
                             placeholder="Paste your resume contents here..."
                             rows={5}
-                            className="w-full text-xs p-3 border border-[#E2E8F0] rounded-xl outline-none focus:border-[#2563EB] bg-[#F8FAFC] resize-none"
+                            className="w-full text-xs p-3 border border-[#E2E8F0] rounded-xl outline-none focus:border-[#2563EB] bg-[#F8FAFC] text-slate-800 resize-none"
                           />
                         )}
                       </div>
@@ -373,7 +373,7 @@ export function InterviewSetupModal({ onClose }: InterviewSetupModalProps) {
                       }}
                       placeholder="Paste target job description..."
                       rows={5}
-                      className="w-full text-xs p-3 border border-[#E2E8F0] rounded-xl outline-none focus:border-[#2563EB] bg-[#F8FAFC] resize-none"
+                      className="w-full text-xs p-3 border border-[#E2E8F0] rounded-xl outline-none focus:border-[#2563EB] bg-[#F8FAFC] text-slate-800 resize-none"
                     />
                     <div className="flex items-center justify-between text-[10px] text-[#64748B] -mt-1 px-1">
                       <span>Paste text directly as primary input</span>
