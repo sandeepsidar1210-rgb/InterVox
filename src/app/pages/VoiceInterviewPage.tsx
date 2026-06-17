@@ -119,7 +119,7 @@ export default function VoiceInterviewPage() {
     maxQuestions: interviewConfig.maxQuestions || 5
   });
 
-  const { phase, interviewerText, candidateText, history, runningScore, questionCount, maxQuestions, error } = state;
+  const { phase, interviewerText, candidateText, history, runningScore, scoreCount, questionCount, maxQuestions, error } = state;
 
   const [token, setToken] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);

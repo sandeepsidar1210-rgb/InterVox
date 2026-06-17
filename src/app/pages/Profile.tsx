@@ -83,6 +83,7 @@ export default function Profile() {
     try {
       const { error } = await supabase.from("profiles").upsert({
         id: userId,
+        email: email,
         full_name: formData.fullName,
         preferred_domain: formData.preferredDomain,
         preferred_voice: formData.preferredVoice,
