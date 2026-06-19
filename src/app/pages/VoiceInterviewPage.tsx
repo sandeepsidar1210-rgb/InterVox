@@ -419,12 +419,10 @@ export default function VoiceInterviewPage() {
 
   // Voice VAD Hook
   const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech } = useVoiceCapture({
-    onChunk: (chunk: Blob) => {
-      chunk.arrayBuffer().then((buf) => {
-        if (socketRef.current?.connected) {
-          socketRef.current.emit('audio:chunk', buf);
-        }
-      });
+    onChunk: (buf: ArrayBuffer) => {
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('audio:chunk', buf);
+      }
     },
     onEnd: () => {
       if (socketRef.current?.connected) {

@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface UseVoiceCaptureProps {
-  onChunk: (chunk: Blob) => void;
+  onChunk: (chunk: ArrayBuffer) => void;
   onEnd: () => void;
   onError?: (err: Error) => void;
   silenceMs?: number;
@@ -22,6 +22,9 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
   // Track speech states
   const hasSpokenRef = useRef<boolean>(false);
   const silenceStartRef = useRef<number | null>(null);
+
+  // Track pending chunk conversions to prevent race conditions during stop/VAD end
+  const pendingChunksRef = useRef<Promise<void>[]>([]);
 
   const cleanupAudio = useCallback(() => {
     // Stop recording if active
@@ -70,6 +73,17 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
     setIsRecording(false);
   }, []);
 
+  // Async helper to guarantee all final chunks are converted and sent before calling onEnd
+  const stopAndSubmit = useCallback(async () => {
+    cleanupAudio();
+    try {
+      await Promise.all(pendingChunksRef.current);
+    } catch (err) {
+      console.warn('Error waiting for pending audio chunk conversions:', err);
+    }
+    onEnd();
+  }, [cleanupAudio, onEnd]);
+
   const start = useCallback(async () => {
     cleanupAudio();
     try {
@@ -114,9 +128,20 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
 
+      pendingChunksRef.current = [];
+
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          onChunk(event.data);
+          const chunk = event.data;
+          const promise = chunk.arrayBuffer().then((buf) => {
+            onChunk(buf);
+          }).catch((err) => {
+            console.error('Failed to convert chunk to ArrayBuffer:', err);
+          });
+          pendingChunksRef.current.push(promise);
+          promise.finally(() => {
+            pendingChunksRef.current = pendingChunksRef.current.filter(p => p !== promise);
+          });
         }
       };
 
@@ -131,7 +156,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       // Volume analysis loop
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Float32Array(bufferLength);
-      const SILENCE_THRESHOLD = 0.012; // Adjusted threshold for voice activity
+      const SILENCE_THRESHOLD = 0.010; // Adjusted slightly for better sensitivity
 
       const checkVolume = () => {
         if (!analyserRef.current || !recordingRef.current) return;
@@ -161,8 +186,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
               const elapsedSilence = Date.now() - silenceStartRef.current;
               if (elapsedSilence >= silenceMs) {
                 console.log('🔇 Silence duration met VAD threshold. Ending speech...');
-                cleanupAudio();
-                onEnd();
+                stopAndSubmit();
                 return;
               }
             }
@@ -182,14 +206,15 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
         onError(err);
       }
     }
-  }, [cleanupAudio, onChunk, onEnd, onError, silenceMs]);
+  }, [cleanupAudio, onChunk, onError, silenceMs, stopAndSubmit]);
 
   const stop = useCallback((shouldSubmit = false) => {
-    cleanupAudio();
     if (shouldSubmit) {
-      onEnd();
+      stopAndSubmit();
+    } else {
+      cleanupAudio();
     }
-  }, [cleanupAudio, onEnd]);
+  }, [cleanupAudio, stopAndSubmit]);
 
   // Make sure we clean up audio on unmount
   useEffect(() => {
