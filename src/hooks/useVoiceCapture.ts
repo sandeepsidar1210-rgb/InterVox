@@ -8,6 +8,7 @@ interface UseVoiceCaptureProps {
 
 export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCaptureProps) {
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const recordingRef = useRef<boolean>(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -62,6 +63,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
     analyserRef.current = null;
     hasSpokenRef.current = false;
     silenceStartRef.current = null;
+    recordingRef.current = false;
     setIsRecording(false);
   }, []);
 
@@ -82,6 +84,16 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
       // Web Audio API setup
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       const audioContext = new AudioContextClass();
+      
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+          console.log('🎙️ Suspended AudioContext successfully resumed');
+        } catch (resumeErr) {
+          console.warn('Failed to resume suspended AudioContext:', resumeErr);
+        }
+      }
+
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 512;
       
@@ -106,6 +118,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
       };
 
       mediaRecorder.start(250); // Emit audio chunks every 250ms
+      recordingRef.current = true;
       setIsRecording(true);
       
       hasSpokenRef.current = false;
@@ -117,7 +130,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
       const SILENCE_THRESHOLD = 0.012; // Adjusted threshold for voice activity
 
       const checkVolume = () => {
-        if (!analyserRef.current || !isRecording) return;
+        if (!analyserRef.current || !recordingRef.current) return;
         
         analyserRef.current.getFloatTimeDomainData(dataArray);
         

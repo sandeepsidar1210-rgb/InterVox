@@ -31,18 +31,16 @@ export default function CameraPermissionModal({
         audio: false,
       });
 
-      // Save preference to profiles table in Supabase
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
+      // Save preference to profiles table in Supabase (non-blocking background task)
+      supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.user) {
-          await supabase
+          supabase
             .from("profiles")
             .update({ camera_enabled_preference: true })
-            .eq("id", session.user.id);
+            .eq("id", session.user.id)
+            .catch((updateErr) => console.warn("Failed to update profile preference:", updateErr));
         }
-      } catch (dbErr) {
-        console.warn("Could not save camera preference to Supabase profile:", dbErr);
-      }
+      }).catch((sessionErr) => console.warn("Failed to fetch session for preference:", sessionErr));
 
       onGrant(stream);
       onClose();

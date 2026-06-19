@@ -147,7 +147,7 @@ export function useNonVerbalAnalysis(
   isActive: boolean
 ): {
   metrics: NonVerbalMetrics;
-  startAnalysis: () => Promise<void>;
+  startAnalysis: (stream: MediaStream) => Promise<void>;
   stopAnalysis: () => NonVerbalSummary;
 } {
   const [displayMetrics, setDisplayMetrics] = useState<NonVerbalMetrics>(defaultMetrics);
@@ -254,7 +254,7 @@ export function useNonVerbalAnalysis(
     }
   }, [computeSessionSummary]);
 
-  const startAnalysis = useCallback(async () => {
+  const startAnalysis = useCallback(async (stream: MediaStream) => {
     if (!videoRef.current) return;
     try {
       // Reset variables
@@ -266,17 +266,36 @@ export function useNonVerbalAnalysis(
       metricsRef.current = { ...defaultMetrics };
 
       const faceMesh = await getFaceMesh(onResults);
-      // @ts-ignore - Camera is loaded from CDN
-      cameraRef.current = new window.Camera(videoRef.current, {
-        onFrame: async () => {
-          if (videoRef.current) {
+      
+      // Bind stream to video element
+      videoRef.current.srcObject = stream;
+      try {
+        await videoRef.current.play();
+      } catch (playErr) {
+        console.warn("video.play() failed or was interrupted:", playErr);
+      }
+
+      let active = true;
+      const processFrame = async () => {
+        if (!active) return;
+        if (videoRef.current && videoRef.current.readyState >= 2) { // HAVE_CURRENT_DATA
+          try {
             await faceMesh.send({ image: videoRef.current });
+          } catch (err) {
+            console.warn("FaceMesh send error:", err);
           }
-        },
-        width: 320,
-        height: 240,
-      });
-      await cameraRef.current.start();
+        }
+        requestAnimationFrame(processFrame);
+      };
+
+      // Mock a control interface that behaves like MediaPipe Camera class
+      cameraRef.current = {
+        stop: () => {
+          active = false;
+        }
+      };
+
+      requestAnimationFrame(processFrame);
     } catch (err) {
       console.error("Failed to start MediaPipe camera/FaceMesh:", err);
     }

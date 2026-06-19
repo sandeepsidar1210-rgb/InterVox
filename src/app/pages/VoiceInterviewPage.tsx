@@ -418,14 +418,30 @@ export default function VoiceInterviewPage() {
     }
   }, [phase, startMic, stopMic]);
 
+  // Cleanup camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => {
+          track.stop();
+          console.log('🔇 Camera track stopped on unmount');
+        });
+      }
+    };
+  }, [cameraStream]);
+
+  // Start camera analysis once the video element is mounted in the DOM
+  useEffect(() => {
+    if (webcamEnabled && cameraStream && videoRef.current) {
+      console.log('📷 Camera video element mounted, starting analysis...');
+      startAnalysis(cameraStream);
+    }
+  }, [webcamEnabled, cameraStream, startAnalysis]);
+
   // Camera Grant and Disable Handlers
   const handleCameraGrant = (stream: MediaStream) => {
     setCameraStream(stream);
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-    }
     setWebcamEnabled(true);
-    startAnalysis();
   };
 
   const handleCameraDisable = () => {
@@ -673,12 +689,18 @@ export default function VoiceInterviewPage() {
                     }`}
                   />
                   <button
-                    disabled={true}
-                    className={`w-16 h-16 rounded-full flex items-center justify-center transition-all z-10 relative cursor-default ${
+                    onClick={() => {
+                      if (phase === 'listening') {
+                        stopMic();
+                      }
+                    }}
+                    disabled={phase !== 'listening'}
+                    className={`w-16 h-16 rounded-full flex items-center justify-center transition-all z-10 relative ${
                       phase === 'listening'
-                        ? 'bg-emerald-500 text-white shadow-[0_4px_16px_rgba(16,185,129,0.3)]'
-                        : 'bg-primary/20 text-primary border border-primary/30'
+                        ? 'bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95'
+                        : 'bg-primary/20 text-primary border border-primary/30 cursor-not-allowed'
                     }`}
+                    title={phase === 'listening' ? 'Click to finish speaking and submit' : 'Microphone inactive'}
                   >
                     {phase === 'listening' ? <Mic size={24} /> : <MicOff size={24} />}
                   </button>

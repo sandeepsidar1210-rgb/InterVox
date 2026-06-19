@@ -92,6 +92,7 @@ export default function WebcamPanel({
               className={`h-full w-full object-cover transition-opacity duration-300 ${
                 isPaused ? "opacity-30" : "opacity-100"
               }`}
+              style={{ transform: "scaleX(-1)" }}
             />
 
             {/* Privacy Shield Button (Top Right) */}
