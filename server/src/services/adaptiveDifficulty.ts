@@ -42,7 +42,7 @@ export async function generateAdaptiveFollowUp(
 
   console.log(`📡 Generating adaptive follow-up via Groq (new diff: ${newDifficulty}, reason: ${reason})...`);
   const res = await groq.chat.completions.create({
-    model: 'llama-3.1-70b-versatile',
+    model: 'llama-3.3-70b-versatile',
     messages: [
       { role: 'system', content: systemPrompt },
       ...session.conversationHistory.map(h => ({

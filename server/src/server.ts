@@ -805,8 +805,7 @@ Provide a detailed evaluation in JSON format:
 async function transcribeAudioInternal(audioBuffer: Buffer, mimeType: string = 'audio/webm'): Promise<string> {
   const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
   if (!GROQ_API_KEY || GROQ_API_KEY === 'your-groq-api-key-here') {
-    console.warn('⚠️ No Groq API key configured - returning empty transcript');
-    return "";
+    throw new Error('No valid Groq API key configured for Whisper transcription.');
   }
 
   console.log('📡 Calling Groq Whisper API for transcription internally...');
@@ -1216,6 +1215,8 @@ app.post('/api/interview/text-to-speech', async (req, res) => {
       return res.send(dummyMp3);
     }
 
+    const speakerId = mapVoiceSpeaker(speaker ? String(speaker) : undefined);
+
     // Call Sarvam AI API with optimized settings for natural interview voice
     const sarvamResponse = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST',
@@ -1226,7 +1227,7 @@ app.post('/api/interview/text-to-speech', async (req, res) => {
       body: JSON.stringify({
         inputs: [String(text)],
         target_language_code: String(language) || 'en-IN',
-        speaker: String(speaker) || 'kavya', // Kavya sounds more professional
+        speaker: speakerId,
         pace: 0.95, // Slightly slower for clarity
         speech_sample_rate: 22050, // High quality audio
         enable_preprocessing: true, // Better text normalization
@@ -1362,7 +1363,7 @@ async function* streamGroqLlama(messages: any[]) {
       'Authorization': `Bearer ${GROQ_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'llama-3.1-70b-versatile',
+      model: 'llama-3.3-70b-versatile',
       messages,
       max_tokens: 120,
       temperature: 0.75,
@@ -1455,6 +1456,15 @@ Rules:
 `;
 }
 
+// Helper to map custom frontend voices to recognized Sarvam AI speaker IDs
+function mapVoiceSpeaker(voiceName: string | undefined): string {
+  const speakerId = String(voiceName || 'kavya').toLowerCase().trim();
+  if (speakerId === 'meera') return 'kavya';
+  if (speakerId === 'arjun') return 'amit';
+  if (speakerId === 'ananya') return 'priya';
+  return speakerId;
+}
+
 // Sarvam AI speech stream
 async function streamTTSAndEmit(socket: any, text: string, voiceName: string) {
   const SARVAM_API_KEY = process.env.SARVAM_API_KEY || '';
@@ -1463,6 +1473,8 @@ async function streamTTSAndEmit(socket: any, text: string, voiceName: string) {
     socket.emit('tts:audio', { audioBase64: '', sampleRate: 22050, textFallback: text });
     return;
   }
+
+  const speakerId = mapVoiceSpeaker(voiceName);
 
   try {
     const response = await fetch('https://api.sarvam.ai/text-to-speech', {
@@ -1474,16 +1486,18 @@ async function streamTTSAndEmit(socket: any, text: string, voiceName: string) {
       body: JSON.stringify({
         inputs: [text],
         target_language_code: 'en-IN',
-        speaker: voiceName || 'meera',
+        speaker: speakerId,
         pace: 1.05,
         pitch: 0,
         loudness: 1.4,
         speech_sample_rate: 22050,
-        model: 'bulbul:v1'
+        model: 'bulbul:v3'
       })
     });
     
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Sarvam AI API error body:', errorText);
       throw new Error(`Sarvam API failed with status ${response.status}`);
     }
 
@@ -1806,6 +1820,7 @@ async function handleCandidateResponse(socket: any, session: SocketSession, tran
     const lastQ = session.conversationHistory.filter(m => m.role === 'interviewer').slice(-1)[0];
     const textToRepeat = lastQ ? lastQ.content : "Tell me about yourself and your background.";
     await streamTTSAndEmit(socket, textToRepeat, session.config.voice || 'meera');
+    socket.emit('tts:done-all');
     session.isProcessing = false;
     return;
   }
@@ -1888,6 +1903,7 @@ async function handleCandidateResponse(socket: any, session: SocketSession, tran
   if (remainder.length > 5) {
     await streamTTSAndEmit(socket, remainder, session.config.voice || 'meera');
   }
+  socket.emit('tts:done-all');
 
   // Trigger evaluation
   scoreAnswerAsync(socket, session, transcript, questionText);
@@ -2115,6 +2131,7 @@ voiceInterviewNamespace.on('connection', (socket) => {
 
       // Play introductory question audio
       await streamTTSAndEmit(socket, firstQuestionText, voicePref);
+      socket.emit('tts:done-all');
 
     } catch (err: any) {
       console.error('Session start exception:', err);
@@ -2194,6 +2211,7 @@ voiceInterviewNamespace.on('connection', (socket) => {
     const lastQ = session.conversationHistory.filter(m => m.role === 'interviewer').slice(-1)[0];
     const textToRepeat = lastQ ? lastQ.content : "Tell me about yourself and your background.";
     await streamTTSAndEmit(socket, textToRepeat, session.config.voice || 'meera');
+    socket.emit('tts:done-all');
   });
 
   socket.on('control:end', async (payload?: { nonVerbalSummary?: any }) => {

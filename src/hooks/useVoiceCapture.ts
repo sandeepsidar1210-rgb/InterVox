@@ -3,11 +3,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 interface UseVoiceCaptureProps {
   onChunk: (chunk: Blob) => void;
   onEnd: () => void;
+  onError?: (err: Error) => void;
   silenceMs?: number;
 }
 
-export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCaptureProps) {
+export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: UseVoiceCaptureProps) {
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [hasDetectedSpeech, setHasDetectedSpeech] = useState<boolean>(false);
   const recordingRef = useRef<boolean>(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -64,6 +66,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
     hasSpokenRef.current = false;
     silenceStartRef.current = null;
     recordingRef.current = false;
+    setHasDetectedSpeech(false);
     setIsRecording(false);
   }, []);
 
@@ -120,6 +123,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
       mediaRecorder.start(250); // Emit audio chunks every 250ms
       recordingRef.current = true;
       setIsRecording(true);
+      setHasDetectedSpeech(false);
       
       hasSpokenRef.current = false;
       silenceStartRef.current = null;
@@ -145,6 +149,7 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
           if (!hasSpokenRef.current) {
             console.log('🗣️ User started speaking...');
             hasSpokenRef.current = true;
+            setHasDetectedSpeech(true);
           }
           silenceStartRef.current = null; // Reset silence tracker
         } else {
@@ -170,15 +175,21 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
       // Start the analysis loop
       animationFrameIdRef.current = requestAnimationFrame(checkVolume);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to initialize microphone VAD capture:', err);
       cleanupAudio();
+      if (onError) {
+        onError(err);
+      }
     }
-  }, [cleanupAudio, onChunk, onEnd, silenceMs]);
+  }, [cleanupAudio, onChunk, onEnd, onError, silenceMs]);
 
-  const stop = useCallback(() => {
+  const stop = useCallback((shouldSubmit = false) => {
     cleanupAudio();
-  }, [cleanupAudio]);
+    if (shouldSubmit) {
+      onEnd();
+    }
+  }, [cleanupAudio, onEnd]);
 
   // Make sure we clean up audio on unmount
   useEffect(() => {
@@ -187,5 +198,5 @@ export function useVoiceCapture({ onChunk, onEnd, silenceMs = 1500 }: UseVoiceCa
     };
   }, [cleanupAudio]);
 
-  return { start, stop, isRecording };
+  return { start, stop, isRecording, hasDetectedSpeech };
 }

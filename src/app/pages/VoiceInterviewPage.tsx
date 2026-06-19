@@ -121,6 +121,14 @@ export default function VoiceInterviewPage() {
 
   const { phase, interviewerText, candidateText, history, runningScore, scoreCount, questionCount, maxQuestions, error } = state;
 
+  const visibleMessages = [...history];
+  if (interviewerText) {
+    const lastMsg = visibleMessages[visibleMessages.length - 1];
+    if (!(lastMsg && lastMsg.role === 'interviewer' && lastMsg.content === interviewerText)) {
+      visibleMessages.push({ role: 'interviewer', content: interviewerText });
+    }
+  }
+
   const [token, setToken] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   
@@ -128,6 +136,12 @@ export default function VoiceInterviewPage() {
   const audioQueue = useRef<string[]>([]);
   const isAudioPlaying = useRef<boolean>(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const allAudioSentRef = useRef<boolean>(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [history, interviewerText]);
   
   const liveScoreCount = useCountUp(runningScore);
   const toast = useToast();
@@ -196,7 +210,9 @@ export default function VoiceInterviewPage() {
   const playNextAudio = () => {
     if (audioQueue.current.length === 0) {
       isAudioPlaying.current = false;
-      dispatch({ type: 'TTS_DONE' });
+      if (allAudioSentRef.current) {
+        dispatch({ type: 'TTS_DONE' });
+      }
       return;
     }
 
@@ -292,6 +308,7 @@ export default function VoiceInterviewPage() {
     });
 
     socket.on('session:ready', (data: { sessionId: string; firstQuestion: string; candidateName?: string | null; roleName?: string | null; companyName?: string | null; projectName?: string | null }) => {
+      allAudioSentRef.current = false;
       dispatch({ type: 'SESSION_READY', payload: data });
       if (data.candidateName) setCandidateName(data.candidateName);
       if (data.roleName) setRoleName(data.roleName);
@@ -304,6 +321,7 @@ export default function VoiceInterviewPage() {
     });
 
     socket.on('interviewer:token', (data: { token: string }) => {
+      allAudioSentRef.current = false;
       dispatch({ type: 'INTERVIEWER_TOKEN', payload: data.token });
     });
 
@@ -328,6 +346,14 @@ export default function VoiceInterviewPage() {
         }
       } else if (data.textFallback) {
         speakBrowserFallback(data.textFallback);
+      }
+    });
+
+    socket.on('tts:done-all', () => {
+      console.log('🔊 All TTS audio packets received for current turn.');
+      allAudioSentRef.current = true;
+      if (!isAudioPlaying.current && audioQueue.current.length === 0) {
+        dispatch({ type: 'TTS_DONE' });
       }
     });
 
@@ -392,7 +418,7 @@ export default function VoiceInterviewPage() {
   }, [interviewerText, candidateName, projectName]);
 
   // Voice VAD Hook
-  const { start: startMic, stop: stopMic, isRecording } = useVoiceCapture({
+  const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech } = useVoiceCapture({
     onChunk: (chunk: Blob) => {
       chunk.arrayBuffer().then((buf) => {
         if (socketRef.current?.connected) {
@@ -402,11 +428,16 @@ export default function VoiceInterviewPage() {
     },
     onEnd: () => {
       if (socketRef.current?.connected) {
+        allAudioSentRef.current = false;
         socketRef.current.emit('audio:end');
         dispatch({ type: 'AUDIO_RECEIVED' });
       }
     },
-    silenceMs: 1500
+    onError: (err) => {
+      toast.error('Microphone initialization failed. Please check permissions.');
+      dispatch({ type: 'SET_ERROR', payload: 'Microphone access denied or failed.' });
+    },
+    silenceMs: 2000
   });
 
   // Manage Mic Activation based on state phase
@@ -459,6 +490,7 @@ export default function VoiceInterviewPage() {
   // Action Controllers
   const handleSkip = () => {
     if (socketRef.current?.connected) {
+      allAudioSentRef.current = false;
       socketRef.current.emit('control:skip');
       dispatch({ type: 'AUDIO_RECEIVED' });
     }
@@ -466,6 +498,7 @@ export default function VoiceInterviewPage() {
 
   const handleRepeat = () => {
     if (socketRef.current?.connected) {
+      allAudioSentRef.current = false;
       socketRef.current.emit('control:repeat');
     }
   };
@@ -612,40 +645,37 @@ export default function VoiceInterviewPage() {
 
                 {!error && phase !== 'connecting' && (
                   <div className="flex flex-col gap-4 w-full">
-                    {/* Interviewer Text bubble */}
-                    {interviewerText && (
+                    {visibleMessages.map((msg, idx) => (
                       <motion.div
+                        key={idx}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="flex gap-2.5 items-start"
+                        className={`flex gap-2.5 items-start ${msg.role === 'interviewer' ? 'justify-start' : 'justify-end'}`}
                       >
-                        <div className="w-6 h-6 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
-                          AI
-                        </div>
-                        <div className="text-sm font-semibold text-white leading-relaxed pr-6 relative">
-                          {interviewerText}
-                          {phase === 'speaking' && (
-                            <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse" />
-                          )}
-                        </div>
+                        {msg.role === 'interviewer' ? (
+                          <>
+                            <div className="w-6 h-6 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
+                              AI
+                            </div>
+                            <div className="text-sm font-semibold text-white leading-relaxed pr-6 relative max-w-[85%]">
+                              {msg.content}
+                              {phase === 'speaking' && idx === visibleMessages.length - 1 && (
+                                <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse" />
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm text-text-secondary font-medium leading-relaxed pl-6 text-right max-w-[85%]">
+                              {msg.content}
+                            </div>
+                            <div className="w-6 h-6 rounded-lg bg-white/10 text-white flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
+                              YOU
+                            </div>
+                          </>
+                        )}
                       </motion.div>
-                    )}
-
-                    {/* Candidate Response Transcript */}
-                    {candidateText && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex gap-2.5 items-start justify-end"
-                      >
-                        <div className="text-sm text-text-secondary font-medium leading-relaxed pl-6 text-right">
-                          {candidateText}
-                        </div>
-                        <div className="w-6 h-6 rounded-lg bg-white/10 text-white flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat">
-                          YOU
-                        </div>
-                      </motion.div>
-                    )}
+                    ))}
 
                     {/* Processing Spinner */}
                     {phase === 'processing' && (
@@ -658,6 +688,8 @@ export default function VoiceInterviewPage() {
                         <span>AI Interviewer is processing your answer...</span>
                       </motion.div>
                     )}
+                    
+                    <div ref={chatEndRef} />
                   </div>
                 )}
               </AnimatePresence>
@@ -666,8 +698,38 @@ export default function VoiceInterviewPage() {
             {/* Action Controls Deck */}
             <div className="flex flex-col gap-4 items-center">
               {/* Status Label */}
-              <div className="text-[10px] font-bold uppercase tracking-wider text-text-secondary">
-                {phase === 'listening' ? 'Speaking ... silence ends question' : phase === 'speaking' ? 'Interviewer speaking' : 'Wait...'}
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-secondary">
+                {phase === 'listening' ? (
+                  hasDetectedSpeech ? (
+                    <>
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                      </span>
+                      <span className="text-red-400">🔴 Recording... Speak now</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-emerald-400">🎙️ Listening... Waiting for speech</span>
+                    </>
+                  )
+                ) : phase === 'speaking' ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                    <span>🔊 Interviewer speaking</span>
+                  </>
+                ) : phase === 'processing' ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="text-amber-500">🤖 Processing your answer...</span>
+                  </>
+                ) : (
+                  <span>Please wait...</span>
+                )}
               </div>
 
               <div className="flex items-center gap-4">
@@ -691,7 +753,7 @@ export default function VoiceInterviewPage() {
                   <button
                     onClick={() => {
                       if (phase === 'listening') {
-                        stopMic();
+                        stopMic(true);
                       }
                     }}
                     disabled={phase !== 'listening'}
