@@ -1447,11 +1447,11 @@ Interview type: ${config.interviewType}.
 Questions asked so far: ${questionCount} of ${config.maxQuestions}.
 
 Rules:
-- Speak naturally. Use short acknowledgments before each response.
-- After each answer choose: follow-up if vague, challenge if wrong, move on if good.
-- Keep replies under 2 sentences unless explaining something.
+- Speak naturally.
+- Crucial: Before asking the next question, start your response with a clear evaluation or compliment/critique of their previous answer (e.g. tell them if it was a great response, if you liked a specific point, or if it lacked details/correctness).
+- After providing the brief feedback, transition to and ask the next question accordingly.
+- Keep replies concise (around 2-3 sentences).
 - Reference the candidate's actual experience when relevant.
-- Never say "Great answer!" — use natural reactions.
 - When all ${config.maxQuestions} questions are done say exactly: "That wraps up our session today."
 `;
 }
@@ -1488,8 +1488,6 @@ async function streamTTSAndEmit(socket: any, text: string, voiceName: string) {
         target_language_code: 'en-IN',
         speaker: speakerId,
         pace: 1.05,
-        pitch: 0,
-        loudness: 1.4,
         speech_sample_rate: 22050,
         model: 'bulbul:v3'
       })
@@ -2166,6 +2164,12 @@ voiceInterviewNamespace.on('connection', (socket) => {
 
     if (bufferList.length === 0) {
       console.warn('⚠️ No audio buffer accumulated.');
+      // Notify the client that the audio was empty and prompt them to speak again
+      const fallbackPrompt = "I didn't hear anything. Could you please repeat your answer?";
+      socket.emit('interviewer:token', { token: fallbackPrompt });
+      socket.emit('interviewer:done', { fullText: fallbackPrompt });
+      await streamTTSAndEmit(socket, fallbackPrompt, session.config.voice || 'meera');
+      socket.emit('tts:done-all');
       session.isProcessing = false;
       return;
     }
