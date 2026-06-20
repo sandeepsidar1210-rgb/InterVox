@@ -23,22 +23,17 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
   const hasSpokenRef = useRef<boolean>(false);
   const silenceStartRef = useRef<number | null>(null);
 
-  // Track pending chunk conversions to prevent race conditions during stop/VAD end
-  const pendingChunksRef = useRef<Promise<void>[]>([]);
+  // Accumulate chunks and track submission intent
+  const chunksRef = useRef<Blob[]>([]);
+  const shouldSubmitRef = useRef<boolean>(false);
 
-  const cleanupAudio = useCallback(() => {
-    // Stop recording if active
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (err) {
-        // ignore state conflicts on quick stop
-      }
-    }
-    
+  const performFullCleanup = useCallback(() => {
     // Stop microphone tracks
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        track.stop();
+        console.log('🔇 Audio track stopped');
+      });
       streamRef.current = null;
     }
 
@@ -71,21 +66,37 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
     recordingRef.current = false;
     setHasDetectedSpeech(false);
     setIsRecording(false);
+    console.log('🧹 VAD Audio full cleanup performed');
   }, []);
 
-  // Async helper to guarantee all final chunks are converted and sent before calling onEnd
-  const stopAndSubmit = useCallback(async () => {
-    cleanupAudio();
-    try {
-      await Promise.all(pendingChunksRef.current);
-    } catch (err) {
-      console.warn('Error waiting for pending audio chunk conversions:', err);
+  const cleanupAudio = useCallback(() => {
+    // Stop recording if active - this will trigger the onstop event asynchronously
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        console.log('⏹️ Stopping MediaRecorder...');
+        mediaRecorderRef.current.stop();
+      } catch (err) {
+        console.warn('Error stopping MediaRecorder:', err);
+        performFullCleanup();
+      }
+    } else {
+      performFullCleanup();
     }
-    onEnd();
-  }, [cleanupAudio, onEnd]);
+  }, [performFullCleanup]);
+
+  // VAD silence trigger or manual click to stop and submit
+  const stopAndSubmit = useCallback(() => {
+    console.log('💾 stopAndSubmit requested: saving and processing recorded audio...');
+    shouldSubmitRef.current = true;
+    cleanupAudio();
+  }, [cleanupAudio]);
 
   const start = useCallback(async () => {
+    // Reset flags
+    shouldSubmitRef.current = false;
+    chunksRef.current = [];
     cleanupAudio();
+    
     try {
       console.log('🎙️ Starting voice VAD capture...');
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -128,24 +139,39 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
 
-      pendingChunksRef.current = [];
-
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          const chunk = event.data;
-          const promise = chunk.arrayBuffer().then((buf) => {
-            onChunk(buf);
-          }).catch((err) => {
-            console.error('Failed to convert chunk to ArrayBuffer:', err);
-          });
-          pendingChunksRef.current.push(promise);
-          promise.finally(() => {
-            pendingChunksRef.current = pendingChunksRef.current.filter(p => p !== promise);
-          });
+          chunksRef.current.push(event.data);
+          console.log(`📦 Chunk collected locally: ${event.data.size} bytes. Total chunks: ${chunksRef.current.length}`);
         }
       };
 
-      mediaRecorder.start(250); // Emit audio chunks every 250ms
+      mediaRecorder.onstop = async () => {
+        console.log('⏹️ MediaRecorder stopped event fired. shouldSubmit:', shouldSubmitRef.current);
+        if (shouldSubmitRef.current) {
+          if (chunksRef.current.length > 0) {
+            const audioBlob = new Blob(chunksRef.current, { type: mimeType });
+            console.log(`📤 Converting final audio Blob of size ${audioBlob.size} bytes...`);
+            try {
+              const arrayBuffer = await audioBlob.arrayBuffer();
+              console.log('📤 Submitting array buffer via onChunk...');
+              onChunk(arrayBuffer);
+            } catch (err) {
+              console.error('Failed to convert chunks to ArrayBuffer:', err);
+            }
+          } else {
+            console.warn('⚠️ No audio chunks recorded during session.');
+          }
+          console.log('🔔 Calling onEnd to notify session processor...');
+          onEnd();
+        }
+        
+        // Always run full cleanup after stop event finishes
+        performFullCleanup();
+      };
+
+      // Start recording with 250ms interval to collect data chunks regularly
+      mediaRecorder.start(250);
       recordingRef.current = true;
       setIsRecording(true);
       setHasDetectedSpeech(false);
@@ -201,17 +227,18 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
 
     } catch (err: any) {
       console.error('Failed to initialize microphone VAD capture:', err);
-      cleanupAudio();
+      performFullCleanup();
       if (onError) {
         onError(err);
       }
     }
-  }, [cleanupAudio, onChunk, onError, silenceMs, stopAndSubmit]);
+  }, [cleanupAudio, onChunk, onError, silenceMs, stopAndSubmit, performFullCleanup]);
 
   const stop = useCallback((shouldSubmit = false) => {
     if (shouldSubmit) {
       stopAndSubmit();
     } else {
+      shouldSubmitRef.current = false;
       cleanupAudio();
     }
   }, [cleanupAudio, stopAndSubmit]);
@@ -219,6 +246,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
   // Make sure we clean up audio on unmount
   useEffect(() => {
     return () => {
+      shouldSubmitRef.current = false;
       cleanupAudio();
     };
   }, [cleanupAudio]);
