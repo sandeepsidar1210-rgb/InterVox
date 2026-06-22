@@ -23,47 +23,12 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
-  const recognitionRef = useRef<any>(null);
-  const browserTranscriptRef = useRef<string>('');
   const resolveTranscriptRef = useRef<((value: string) => void) | null>(null);
 
   const startRecording = useCallback(async () => {
     try {
       console.log('🎤 Starting Whisper recording...');
       setError(null);
-      
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition && !recognitionRef.current) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'en-IN';
-        
-        recognitionRef.current.onresult = (event: any) => {
-          let finalTranscript = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript + ' ';
-            }
-          }
-          if (finalTranscript) {
-            browserTranscriptRef.current += finalTranscript;
-          }
-        };
-        
-        recognitionRef.current.onerror = (e: any) => {
-          console.warn('Browser speech recognition error:', e.error);
-        };
-      }
-
-      browserTranscriptRef.current = '';
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch (err) {
-          console.warn('Browser speech recognition start failed:', err);
-        }
-      }
       
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -109,7 +74,7 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
       };
       
       // Start recording
-      mediaRecorder.start(1000); // Collect data every 1 second
+      mediaRecorder.start(250); // Collect data every 250ms
       setIsRecording(true);
       console.log('✅ Recording started');
       
@@ -122,14 +87,6 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
 
   const stopRecording = useCallback(async (): Promise<string> => {
     console.log('🛑 Stopping recording...');
-    
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (err) {
-        console.warn('Failed to stop browser speech recognition:', err);
-      }
-    }
     
     if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
       setIsRecording(false);
@@ -201,27 +158,14 @@ export function useWhisperRecognition(): UseWhisperRecognitionReturn {
       const data = await response.json();
       console.log('✅ Transcription received:', data.transcript);
       
-      if (data.transcript && data.transcript.includes('[Mock transcription]')) {
-        console.warn('⚠️ Received mock transcription from backend. Falling back to browser SpeechRecognition.');
-        const finalBackup = browserTranscriptRef.current.trim();
-        resultText = finalBackup || "[No speech detected by browser speech recognition]";
-      } else {
-        resultText = data.transcript;
-      }
+      resultText = data.transcript || '';
       setTranscript(resultText);
       setError(null);
       
     } catch (err: any) {
       console.error('❌ Error processing audio:', err);
-      if (browserTranscriptRef.current.trim()) {
-        console.warn('⚠️ Server transcription failed. Falling back to browser SpeechRecognition.');
-        resultText = browserTranscriptRef.current.trim();
-        setTranscript(resultText);
-        setError(null);
-      } else {
-        setError(`Transcription error: ${err.message}`);
-        resultText = '';
-      }
+      setError(`Transcription error: ${err.message}`);
+      resultText = '';
     } finally {
       // Clean up
       audioChunksRef.current = [];

@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface UseVoiceCaptureProps {
   onChunk: (chunk: ArrayBuffer) => void;
-  onEnd: () => void;
+  onEnd: (transcript?: string) => void;
   onError?: (err: Error) => void;
   silenceMs?: number;
 }
@@ -10,6 +10,7 @@ interface UseVoiceCaptureProps {
 export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: UseVoiceCaptureProps) {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [hasDetectedSpeech, setHasDetectedSpeech] = useState<boolean>(false);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const recordingRef = useRef<boolean>(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -26,6 +27,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
   // Accumulate chunks and track submission intent
   const chunksRef = useRef<Blob[]>([]);
   const shouldSubmitRef = useRef<boolean>(false);
+  const hasSubmittedRef = useRef<boolean>(false);
 
   const performFullCleanup = useCallback(() => {
     // Stop microphone tracks
@@ -61,6 +63,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
 
     mediaRecorderRef.current = null;
     analyserRef.current = null;
+    setAnalyser(null);
     hasSpokenRef.current = false;
     silenceStartRef.current = null;
     recordingRef.current = false;
@@ -69,33 +72,66 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
     console.log('🧹 VAD Audio full cleanup performed');
   }, []);
 
-  const cleanupAudio = useCallback(() => {
-    // Stop recording if active - this will trigger the onstop event asynchronously
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        console.log('⏹️ Stopping MediaRecorder...');
-        mediaRecorderRef.current.stop();
-      } catch (err) {
-        console.warn('Error stopping MediaRecorder:', err);
+  const cleanupAudio = useCallback((isGraceful = false) => {
+    const hasMediaRecorder = !!mediaRecorderRef.current;
+    const isRecorderActive = hasMediaRecorder && mediaRecorderRef.current!.state !== 'inactive';
+
+    if (!isGraceful) {
+      // Hard stop: clear event handlers so they don't fire asynchronously
+      if (hasMediaRecorder) {
+        mediaRecorderRef.current!.onstop = null;
+        mediaRecorderRef.current!.ondataavailable = null;
+        mediaRecorderRef.current!.onerror = null;
+        
+        if (isRecorderActive) {
+          try {
+            console.log('⏹️ Hard stopping MediaRecorder...');
+            mediaRecorderRef.current!.stop();
+          } catch (err) {
+            console.warn('Error hard stopping MediaRecorder:', err);
+          }
+        }
+      }
+      performFullCleanup();
+    } else {
+      // Graceful stop to submit
+      if (isRecorderActive) {
+        try {
+          console.log('⏹️ Graceful stopping MediaRecorder...');
+          mediaRecorderRef.current!.stop();
+        } catch (err) {
+          console.warn('Error graceful stopping MediaRecorder:', err);
+          if (shouldSubmitRef.current && !hasSubmittedRef.current) {
+            hasSubmittedRef.current = true;
+            onEnd();
+          }
+          performFullCleanup();
+        }
+      } else {
+        console.warn('⚠️ MediaRecorder is inactive or null during graceful cleanup. shouldSubmit:', shouldSubmitRef.current, 'hasSubmitted:', hasSubmittedRef.current);
+        if (shouldSubmitRef.current && !hasSubmittedRef.current) {
+          hasSubmittedRef.current = true;
+          onEnd();
+        }
         performFullCleanup();
       }
-    } else {
-      performFullCleanup();
     }
-  }, [performFullCleanup]);
+  }, [performFullCleanup, onEnd]);
 
   // VAD silence trigger or manual click to stop and submit
   const stopAndSubmit = useCallback(() => {
+    if (shouldSubmitRef.current) return;
     console.log('💾 stopAndSubmit requested: saving and processing recorded audio...');
     shouldSubmitRef.current = true;
-    cleanupAudio();
+    cleanupAudio(true); // Graceful stop to allow onstop event to process chunks
   }, [cleanupAudio]);
 
   const start = useCallback(async () => {
     // Reset flags
     shouldSubmitRef.current = false;
+    hasSubmittedRef.current = false;
     chunksRef.current = [];
-    cleanupAudio();
+    cleanupAudio(false); // Hard stop to reset any previous state synchronously
     
     try {
       console.log('🎙️ Starting voice VAD capture...');
@@ -130,6 +166,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       
       audioContextRef.current = audioContext;
       analyserRef.current = analyser;
+      setAnalyser(analyser);
 
       // MediaRecorder configuration
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -147,15 +184,17 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       };
 
       mediaRecorder.onstop = async () => {
-        console.log('⏹️ MediaRecorder stopped event fired. shouldSubmit:', shouldSubmitRef.current);
-        if (shouldSubmitRef.current) {
+        console.log('⏹️ MediaRecorder stopped event fired. shouldSubmit:', shouldSubmitRef.current, 'hasSubmitted:', hasSubmittedRef.current);
+        if (shouldSubmitRef.current && !hasSubmittedRef.current) {
+          hasSubmittedRef.current = true;
           if (chunksRef.current.length > 0) {
             const audioBlob = new Blob(chunksRef.current, { type: mimeType });
             console.log(`📤 Converting final audio Blob of size ${audioBlob.size} bytes...`);
             try {
               const arrayBuffer = await audioBlob.arrayBuffer();
-              console.log('📤 Submitting array buffer via onChunk...');
-              onChunk(arrayBuffer);
+              const uint8Array = new Uint8Array(arrayBuffer);
+              console.log('📤 Submitting Uint8Array via onChunk. Size:', uint8Array.length);
+              onChunk(uint8Array);
             } catch (err) {
               console.error('Failed to convert chunks to ArrayBuffer:', err);
             }
@@ -183,10 +222,18 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Float32Array(bufferLength);
       const SILENCE_THRESHOLD = 0.010; // Adjusted slightly for better sensitivity
+      const startTime = Date.now();
+      const STARTUP_DELAY_MS = 600; // Ignore first 600ms of audio level for VAD checks to bypass mic click/pop noise
 
       const checkVolume = () => {
         if (!analyserRef.current || !recordingRef.current) return;
         
+        // Skip VAD checks during startup to ignore mic connection pop
+        if (Date.now() - startTime < STARTUP_DELAY_MS) {
+          animationFrameIdRef.current = requestAnimationFrame(checkVolume);
+          return;
+        }
+
         analyserRef.current.getFloatTimeDomainData(dataArray);
         
         // Calculate Root Mean Square (RMS) volume
@@ -211,9 +258,10 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
             } else {
               const elapsedSilence = Date.now() - silenceStartRef.current;
               if (elapsedSilence >= silenceMs) {
-                console.log('🔇 Silence duration met VAD threshold. Ending speech...');
-                stopAndSubmit();
-                return;
+                console.log('🔇 Silence duration met VAD threshold. Resetting speech detection (auto-submit disabled).');
+                hasSpokenRef.current = false;
+                setHasDetectedSpeech(false);
+                silenceStartRef.current = null;
               }
             }
           }
@@ -232,24 +280,28 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
         onError(err);
       }
     }
-  }, [cleanupAudio, onChunk, onError, silenceMs, stopAndSubmit, performFullCleanup]);
+  }, [cleanupAudio, onChunk, onEnd, onError, silenceMs, stopAndSubmit, performFullCleanup]);
 
   const stop = useCallback((shouldSubmit = false) => {
     if (shouldSubmit) {
       stopAndSubmit();
     } else {
       shouldSubmitRef.current = false;
-      cleanupAudio();
+      cleanupAudio(false); // Hard stop
     }
   }, [cleanupAudio, stopAndSubmit]);
+
+  const getAnalyser = useCallback(() => {
+    return analyserRef.current;
+  }, []);
 
   // Make sure we clean up audio on unmount
   useEffect(() => {
     return () => {
       shouldSubmitRef.current = false;
-      cleanupAudio();
+      cleanupAudio(false); // Hard stop
     };
   }, [cleanupAudio]);
 
-  return { start, stop, isRecording, hasDetectedSpeech };
+  return { start, stop, isRecording, hasDetectedSpeech, getAnalyser, analyser };
 }

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { supabase } from '../../utils/supabase';
 import { useVoiceCapture } from '../../hooks/useVoiceCapture';
+import { useVoiceRecognition } from '../../hooks/useVoiceRecognition';
 import { useCountUp } from '../../hooks/useCountUp';
 import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal, GridBackground } from '../components';
 import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft, Video } from 'lucide-react';
@@ -131,6 +132,19 @@ export default function VoiceInterviewPage() {
 
   const [token, setToken] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
+
+  const {
+    transcript: browserTranscript,
+    isListening: isBrowserListening,
+    startListening: startBrowserListening,
+    stopListening: stopBrowserListening,
+    resetTranscript: resetBrowserTranscript,
+  } = useVoiceRecognition();
+
+  const browserTranscriptRef = useRef('');
+  useEffect(() => {
+    browserTranscriptRef.current = browserTranscript;
+  }, [browserTranscript]);
   
   // Audio playback queue refs
   const audioQueue = useRef<string[]>([]);
@@ -417,35 +431,47 @@ export default function VoiceInterviewPage() {
     }
   }, [interviewerText, candidateName, projectName]);
 
+  // Memoized microphone callbacks to prevent re-recording loop on every render
+  const handleChunk = useCallback((buf: ArrayBuffer) => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('audio:chunk', buf);
+    }
+  }, []);
+
+  const handleAudioEnd = useCallback(() => {
+    if (socketRef.current?.connected) {
+      allAudioSentRef.current = false;
+      const fallbackText = browserTranscriptRef.current;
+      console.log('📤 Emitting audio:end with fallback text:', fallbackText);
+      socketRef.current.emit('audio:end', { textFallback: fallbackText });
+      dispatch({ type: 'AUDIO_RECEIVED' });
+    }
+  }, []);
+
+  const handleMicError = useCallback((err: Error) => {
+    toast.error('Microphone initialization failed. Please check permissions.');
+    dispatch({ type: 'SET_ERROR', payload: 'Microphone access denied or failed.' });
+  }, [toast]);
+
   // Voice VAD Hook
-  const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech } = useVoiceCapture({
-    onChunk: (buf: ArrayBuffer) => {
-      if (socketRef.current?.connected) {
-        socketRef.current.emit('audio:chunk', buf);
-      }
-    },
-    onEnd: () => {
-      if (socketRef.current?.connected) {
-        allAudioSentRef.current = false;
-        socketRef.current.emit('audio:end');
-        dispatch({ type: 'AUDIO_RECEIVED' });
-      }
-    },
-    onError: (err) => {
-      toast.error('Microphone initialization failed. Please check permissions.');
-      dispatch({ type: 'SET_ERROR', payload: 'Microphone access denied or failed.' });
-    },
-    silenceMs: 2000
+  const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech, getAnalyser, analyser } = useVoiceCapture({
+    onChunk: handleChunk,
+    onEnd: handleAudioEnd,
+    onError: handleMicError,
+    silenceMs: 3000
   });
 
-  // Manage Mic Activation based on state phase
+  // Manage Mic Activation based on state phase - startMic and stopMic are now stable!
   useEffect(() => {
     if (phase === 'listening') {
+      resetBrowserTranscript();
       startMic();
+      startBrowserListening();
     } else {
       stopMic();
+      stopBrowserListening();
     }
-  }, [phase, startMic, stopMic]);
+  }, [phase, startMic, stopMic, startBrowserListening, stopBrowserListening, resetBrowserTranscript]);
 
   // Cleanup camera stream on unmount
   useEffect(() => {
@@ -606,7 +632,7 @@ export default function VoiceInterviewPage() {
             </div>
 
             <div className="h-10 w-full max-w-xs flex items-center justify-center">
-              <AudioVisualizer isActive={phase === 'listening' || phase === 'speaking'} />
+              <AudioVisualizer isActive={phase === 'listening'} analyser={analyser} />
             </div>
           </div>
 

@@ -27,6 +27,8 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
   const recognitionRef = useRef<any>(null);
   const isStoppedManually = useRef<boolean>(false);
   const restartTimeoutRef = useRef<number | null>(null);
+  const accumulatedTranscriptRef = useRef<string>('');
+  const sessionTranscriptRef = useRef<string>('');
 
   useEffect(() => {
     // Check if browser supports Web Speech API
@@ -52,31 +54,19 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       
       // Event: On result (transcript received)
       recognitionRef.current.onresult = (event: any) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
+        let resultTranscript = '';
         
-        // Process all results
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          
-          if (event.results[i].isFinal) {
-            // Final result - append with space
-            finalTranscript += transcript + ' ';
-          } else {
-            // Interim result - show temporarily
-            interimTranscript += transcript;
-          }
+        // Accumulate both final and interim results from the current recognition session
+        for (let i = 0; i < event.results.length; i++) {
+          resultTranscript += event.results[i][0].transcript + ' ';
         }
         
-        // Update transcript with final results
-        if (finalTranscript) {
-          setTranscript((prev) => prev + finalTranscript);
-        }
+        const finalOutput = resultTranscript.trim();
+        sessionTranscriptRef.current = finalOutput;
         
-        // Also show interim results in console for debugging
-        if (interimTranscript) {
-          console.log('🗣️ Interim:', interimTranscript);
-        }
+        const fullTranscript = (accumulatedTranscriptRef.current + ' ' + finalOutput).trim();
+        setTranscript(fullTranscript);
+        console.log('🗣️ Current transcript:', fullTranscript);
       };
       
       // Event: On error
@@ -109,6 +99,12 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       // Event: On end (recognition stopped)
       recognitionRef.current.onend = () => {
         console.log('🛑 Voice recognition ended');
+        
+        // Accumulate the session transcript before we restart or end
+        if (sessionTranscriptRef.current) {
+          accumulatedTranscriptRef.current = (accumulatedTranscriptRef.current + ' ' + sessionTranscriptRef.current).trim();
+          sessionTranscriptRef.current = ''; // Clear for next session
+        }
         
         // Auto-restart if not manually stopped
         if (!isStoppedManually.current && isListening) {
@@ -184,45 +180,62 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       return;
     }
     
-    try {
-      isStoppedManually.current = false;
-      setError(null);
-      recognitionRef.current.start();
-      console.log('▶️ Starting voice recognition');
-    } catch (err: any) {
-      // If already started, just log
-      if (err.message && err.message.includes('already started')) {
-        console.log('ℹ️ Recognition already running');
+    isStoppedManually.current = false;
+    setError(null);
+    
+    let retryCount = 0;
+    const maxRetries = 5;
+    
+    const tryStart = () => {
+      if (isStoppedManually.current) return;
+      
+      try {
+        recognitionRef.current.start();
+        console.log('▶️ Starting voice recognition');
         setIsListening(true);
-      } else {
-        console.error('Error starting recognition:', err);
-        setError(err.message || 'Failed to start recording');
+      } catch (err: any) {
+        const errMsg = err.message || '';
+        if (errMsg.toLowerCase().includes('already started')) {
+          console.log('ℹ️ Recognition already running');
+          setIsListening(true);
+        } else if (retryCount < maxRetries) {
+          retryCount++;
+          console.warn(`⚠️ Failed to start recognition, retrying in 200ms (attempt ${retryCount}/${maxRetries}):`, err);
+          setTimeout(tryStart, 200);
+        } else {
+          console.error('❌ Error starting recognition after max retries:', err);
+          setError(errMsg || 'Failed to start recording');
+          setIsListening(false);
+        }
       }
-    }
+    };
+    
+    tryStart();
   };
 
   const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      isStoppedManually.current = true;
-      
-      // Clear any pending restart
-      if (restartTimeoutRef.current) {
-        clearTimeout(restartTimeoutRef.current);
-        restartTimeoutRef.current = null;
-      }
-      
+    isStoppedManually.current = true;
+    
+    // Clear any pending restart
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+    
+    if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
         console.log('⏸️ Stopping voice recognition');
       } catch (err) {
         console.error('Error stopping recognition:', err);
       }
-      
-      setIsListening(false);
     }
+    setIsListening(false);
   };
 
   const resetTranscript = () => {
+    accumulatedTranscriptRef.current = '';
+    sessionTranscriptRef.current = '';
     setTranscript('');
     setError(null);
     console.log('🔄 Transcript reset');
