@@ -2159,8 +2159,8 @@ voiceInterviewNamespace.on('connection', (socket) => {
     session.audioBuffer.push(bufferChunk);
   });
 
-  socket.on('audio:end', async (payload?: { textFallback?: string }) => {
-    console.log('⏹️ Server received audio:end event. Payload:', payload);
+  socket.on('audio:end', async (payload?: { audioData?: any; textFallback?: string }) => {
+    console.log('⏹️ Server received audio:end event. Has audioData:', !!(payload?.audioData), 'Has textFallback:', !!(payload?.textFallback));
     const session = socketSessions.get(socket.id);
     if (!session) {
       socket.emit('error', { code: 'SESSION_NOT_FOUND', message: 'No active session.' });
@@ -2173,8 +2173,28 @@ voiceInterviewNamespace.on('connection', (socket) => {
     }
     
     session.isProcessing = true;
+
+    // Collect audio from two possible sources:
+    // 1. Inline audioData sent atomically with this event (primary path - new approach)
+    // 2. Previously buffered audio:chunk events (legacy/backward-compatible path)
     const bufferList = [...session.audioBuffer];
     session.audioBuffer = [];
+
+    // If audioData was sent inline with audio:end (new atomic approach), add it to bufferList
+    if (payload?.audioData) {
+      let inlineBuffer: Buffer;
+      if (Buffer.isBuffer(payload.audioData)) {
+        inlineBuffer = payload.audioData;
+      } else if (payload.audioData instanceof ArrayBuffer) {
+        inlineBuffer = Buffer.from(payload.audioData);
+      } else if (payload.audioData && payload.audioData.buffer instanceof ArrayBuffer) {
+        inlineBuffer = Buffer.from(payload.audioData.buffer);
+      } else {
+        inlineBuffer = Buffer.from(payload.audioData);
+      }
+      console.log(`📦 Received inline audioData in audio:end event: ${inlineBuffer.length} bytes`);
+      bufferList.push(inlineBuffer);
+    }
 
     console.log(`📊 Processing audio buffer. Number of chunks in bufferList: ${bufferList.length}`);
     if (bufferList.length > 0) {
@@ -2183,7 +2203,7 @@ voiceInterviewNamespace.on('connection', (socket) => {
     }
 
     if (bufferList.length === 0) {
-      console.warn('⚠️ No audio buffer accumulated.');
+      console.warn('⚠️ No audio buffer accumulated (neither inline nor streamed).');
       
       // If we have a fallback transcript from client-side speech recognition, use it!
       if (payload?.textFallback && payload.textFallback.trim().length > 0) {
@@ -2194,9 +2214,9 @@ voiceInterviewNamespace.on('connection', (socket) => {
         return;
       }
 
-      // DEVELOPMENT FALLBACK: Use default mock transcript to let the user proceed and test the application
-      console.log('📋 No audio buffer and no textFallback. Using mock development transcript fallback.');
-      const transcript = 'I solved this using Node.js, Express, and PostgreSQL, focusing on database indexing and query optimization to reduce latency.';
+      // No audio and no fallback text — inform the system that no response was captured
+      console.warn('⚠️ No audio buffer and no textFallback. Recording "No response was recorded."');
+      const transcript = 'No response was recorded.';
       socket.emit('transcript:final', { text: transcript, isFinal: true });
       await handleCandidateResponse(socket, session, transcript);
       return;
@@ -2224,8 +2244,8 @@ voiceInterviewNamespace.on('connection', (socket) => {
           console.log(`📋 Using client-side speech recognition fallback transcript: "${payload.textFallback}"`);
           transcript = payload.textFallback;
         } else {
-          console.warn('⚠️ No client-side fallback transcript available, using hardcoded default');
-          transcript = 'I solved this using Node.js, Express, and PostgreSQL, focusing on database indexing and query optimization to reduce latency.';
+          console.warn('⚠️ Transcription failed and no client-side fallback available. Recording "No response was recorded."');
+          transcript = 'No response was recorded.';
         }
       }
       console.log(`🗣️ Transcribed text: "${transcript}"`);

@@ -29,6 +29,7 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
   const restartTimeoutRef = useRef<number | null>(null);
   const accumulatedTranscriptRef = useRef<string>('');
   const sessionTranscriptRef = useRef<string>('');
+  const isListeningRef = useRef<boolean>(false);
 
   useEffect(() => {
     // Check if browser supports Web Speech API
@@ -54,17 +55,24 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       
       // Event: On result (transcript received)
       recognitionRef.current.onresult = (event: any) => {
-        let resultTranscript = '';
+        let interimTranscript = '';
+        let finalTranscript = '';
         
-        // Accumulate both final and interim results from the current recognition session
+        // Separate final from interim results for reliability
         for (let i = 0; i < event.results.length; i++) {
-          resultTranscript += event.results[i][0].transcript + ' ';
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalTranscript += result[0].transcript + ' ';
+          } else {
+            interimTranscript += result[0].transcript + ' ';
+          }
         }
         
-        const finalOutput = resultTranscript.trim();
-        sessionTranscriptRef.current = finalOutput;
+        // Use final transcript if available, otherwise show interim for live feedback
+        const currentSessionText = (finalTranscript + interimTranscript).trim();
+        sessionTranscriptRef.current = currentSessionText;
         
-        const fullTranscript = (accumulatedTranscriptRef.current + ' ' + finalOutput).trim();
+        const fullTranscript = (accumulatedTranscriptRef.current + ' ' + currentSessionText).trim();
         setTranscript(fullTranscript);
         console.log('🗣️ Current transcript:', fullTranscript);
       };
@@ -81,13 +89,15 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
         } else if (event.error === 'audio-capture') {
           setError('Microphone not found or permission denied. Please check your settings.');
           setIsListening(false);
+          isListeningRef.current = false;
         } else if (event.error === 'not-allowed') {
           setError('Microphone access denied. Please allow microphone permission.');
           setIsListening(false);
+          isListeningRef.current = false;
         } else if (event.error === 'network') {
           setError('Network error. Please check your internet connection.');
-          // Try to restart
-          if (!isStoppedManually.current && isListening) {
+          // Try to restart — use ref to avoid stale closure
+          if (!isStoppedManually.current && isListeningRef.current) {
             console.log('🔄 Attempting to restart after network error...');
             restartRecognition();
           }
@@ -106,12 +116,13 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
           sessionTranscriptRef.current = ''; // Clear for next session
         }
         
-        // Auto-restart if not manually stopped
-        if (!isStoppedManually.current && isListening) {
+        // Auto-restart if not manually stopped — use ref to avoid stale closure
+        if (!isStoppedManually.current && isListeningRef.current) {
           console.log('🔄 Auto-restarting recognition...');
           restartRecognition();
         } else {
           setIsListening(false);
+          isListeningRef.current = false;
         }
       };
       
@@ -193,11 +204,13 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
         recognitionRef.current.start();
         console.log('▶️ Starting voice recognition');
         setIsListening(true);
+        isListeningRef.current = true;
       } catch (err: any) {
         const errMsg = err.message || '';
         if (errMsg.toLowerCase().includes('already started')) {
           console.log('ℹ️ Recognition already running');
           setIsListening(true);
+          isListeningRef.current = true;
         } else if (retryCount < maxRetries) {
           retryCount++;
           console.warn(`⚠️ Failed to start recognition, retrying in 200ms (attempt ${retryCount}/${maxRetries}):`, err);
@@ -206,6 +219,7 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
           console.error('❌ Error starting recognition after max retries:', err);
           setError(errMsg || 'Failed to start recording');
           setIsListening(false);
+          isListeningRef.current = false;
         }
       }
     };
@@ -231,6 +245,7 @@ export const useVoiceRecognition = (): VoiceRecognitionHook => {
       }
     }
     setIsListening(false);
+    isListeningRef.current = false;
   };
 
   const resetTranscript = () => {

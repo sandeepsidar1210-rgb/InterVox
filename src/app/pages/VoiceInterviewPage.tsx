@@ -432,18 +432,18 @@ export default function VoiceInterviewPage() {
   }, [interviewerText, candidateName, projectName]);
 
   // Memoized microphone callbacks to prevent re-recording loop on every render
-  const handleChunk = useCallback((buf: ArrayBuffer) => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('audio:chunk', buf);
-    }
-  }, []);
-
-  const handleAudioEnd = useCallback(() => {
+  const handleAudioEnd = useCallback((audioData: Uint8Array | null) => {
     if (socketRef.current?.connected) {
       allAudioSentRef.current = false;
       const fallbackText = browserTranscriptRef.current;
-      console.log('📤 Emitting audio:end with fallback text:', fallbackText);
-      socketRef.current.emit('audio:end', { textFallback: fallbackText });
+      console.log('📤 Emitting audio:end with audio data size:', audioData?.length ?? 0, 'and fallback text:', fallbackText);
+      
+      // Send audio data AND textFallback together in a single atomic event
+      // This eliminates the race condition where audio:end arrived before audio:chunk
+      socketRef.current.emit('audio:end', { 
+        audioData: audioData || null, 
+        textFallback: fallbackText 
+      });
       dispatch({ type: 'AUDIO_RECEIVED' });
     }
   }, []);
@@ -455,7 +455,6 @@ export default function VoiceInterviewPage() {
 
   // Voice VAD Hook
   const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech, getAnalyser, analyser } = useVoiceCapture({
-    onChunk: handleChunk,
     onEnd: handleAudioEnd,
     onError: handleMicError,
     silenceMs: 3000

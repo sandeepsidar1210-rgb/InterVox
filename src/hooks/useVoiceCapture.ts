@@ -1,13 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface UseVoiceCaptureProps {
-  onChunk: (chunk: ArrayBuffer) => void;
-  onEnd: (transcript?: string) => void;
+  onEnd: (audioData: Uint8Array | null) => void;
   onError?: (err: Error) => void;
   silenceMs?: number;
 }
 
-export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: UseVoiceCaptureProps) {
+export function useVoiceCapture({ onEnd, onError, silenceMs = 1500 }: UseVoiceCaptureProps) {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [hasDetectedSpeech, setHasDetectedSpeech] = useState<boolean>(false);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
@@ -187,22 +186,22 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
         console.log('⏹️ MediaRecorder stopped event fired. shouldSubmit:', shouldSubmitRef.current, 'hasSubmitted:', hasSubmittedRef.current);
         if (shouldSubmitRef.current && !hasSubmittedRef.current) {
           hasSubmittedRef.current = true;
+          let audioData: Uint8Array | null = null;
           if (chunksRef.current.length > 0) {
             const audioBlob = new Blob(chunksRef.current, { type: mimeType });
             console.log(`📤 Converting final audio Blob of size ${audioBlob.size} bytes...`);
             try {
               const arrayBuffer = await audioBlob.arrayBuffer();
-              const uint8Array = new Uint8Array(arrayBuffer);
-              console.log('📤 Submitting Uint8Array via onChunk. Size:', uint8Array.length);
-              onChunk(uint8Array);
+              audioData = new Uint8Array(arrayBuffer);
+              console.log('📤 Audio data prepared. Size:', audioData.length);
             } catch (err) {
               console.error('Failed to convert chunks to ArrayBuffer:', err);
             }
           } else {
             console.warn('⚠️ No audio chunks recorded during session.');
           }
-          console.log('🔔 Calling onEnd to notify session processor...');
-          onEnd();
+          console.log('🔔 Calling onEnd with audio data to notify session processor...');
+          onEnd(audioData);
         }
         
         // Always run full cleanup after stop event finishes
@@ -280,7 +279,7 @@ export function useVoiceCapture({ onChunk, onEnd, onError, silenceMs = 1500 }: U
         onError(err);
       }
     }
-  }, [cleanupAudio, onChunk, onEnd, onError, silenceMs, stopAndSubmit, performFullCleanup]);
+  }, [cleanupAudio, onEnd, onError, silenceMs, stopAndSubmit, performFullCleanup]);
 
   const stop = useCallback((shouldSubmit = false) => {
     if (shouldSubmit) {
