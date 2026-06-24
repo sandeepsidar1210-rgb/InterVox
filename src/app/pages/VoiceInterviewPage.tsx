@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { supabase } from '../../utils/supabase';
-import { useVoiceCapture } from '../../hooks/useVoiceCapture';
 import { useVoiceRecognition } from '../../hooks/useVoiceRecognition';
 import { useCountUp } from '../../hooks/useCountUp';
 import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal, GridBackground } from '../components';
@@ -136,15 +135,23 @@ export default function VoiceInterviewPage() {
   const {
     transcript: browserTranscript,
     isListening: isBrowserListening,
+    isSupported: isSpeechSupported,
+    error: speechError,
     startListening: startBrowserListening,
     stopListening: stopBrowserListening,
     resetTranscript: resetBrowserTranscript,
   } = useVoiceRecognition();
 
+  // Always keep transcript ref in sync so submit can read the latest value
   const browserTranscriptRef = useRef('');
   useEffect(() => {
     browserTranscriptRef.current = browserTranscript;
   }, [browserTranscript]);
+
+  // isRecording mirrors the browser speech recognition state
+  const isRecording = isBrowserListening;
+  // hasDetectedSpeech is true when the user has spoken something
+  const hasDetectedSpeech = browserTranscript.trim().length > 0;
   
   // Audio playback queue refs
   const audioQueue = useRef<string[]>([]);
@@ -431,62 +438,39 @@ export default function VoiceInterviewPage() {
     }
   }, [interviewerText, candidateName, projectName]);
 
-  // Memoized microphone callbacks to prevent re-recording loop on every render
-  const handleAudioEnd = useCallback((audioData: Uint8Array | null) => {
-    if (socketRef.current?.connected) {
-      allAudioSentRef.current = false;
-      const fallbackText = browserTranscriptRef.current;
-      
-      // Convert Uint8Array to base64 string for reliable Socket.IO JSON serialization.
-      // Socket.IO's default serializer does NOT preserve Uint8Array — it arrives as 
-      // an empty object or gets stripped entirely on the server side.
-      let audioBase64: string | null = null;
-      if (audioData && audioData.length > 0) {
-        let binaryStr = '';
-        // Process in chunks of 8192 to avoid call-stack overflow on large arrays
-        const chunkSize = 8192;
-        for (let i = 0; i < audioData.length; i += chunkSize) {
-          const slice = audioData.subarray(i, Math.min(i + chunkSize, audioData.length));
-          binaryStr += String.fromCharCode.apply(null, slice as unknown as number[]);
-        }
-        audioBase64 = btoa(binaryStr);
-        console.log(`📤 Converted ${audioData.length} bytes of audio to base64 string (${audioBase64.length} chars)`);
-      }
-      
-      console.log('📤 Emitting audio:end with audio base64 length:', audioBase64?.length ?? 0, 'and fallback text:', fallbackText);
-      
-      // Send base64-encoded audio AND textFallback together in a single atomic event
-      socketRef.current.emit('audio:end', { 
-        audioData: audioBase64, 
-        textFallback: fallbackText 
-      });
-      dispatch({ type: 'AUDIO_RECEIVED' });
-    }
-  }, []);
+  // Submit the spoken answer to the server using Web Speech API transcript only.
+  // No MediaRecorder / audio binary involved — transcript text IS the answer.
+  const handleSubmitAnswer = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+
+    // Stop listening before we read the final transcript
+    stopBrowserListening();
+
+    const spokenText = browserTranscriptRef.current.trim();
+    console.log('📤 Submitting spoken answer:', spokenText || '(empty)');
+
+    allAudioSentRef.current = false;
+    socketRef.current.emit('audio:end', {
+      audioData: null,
+      textFallback: spokenText || '',
+    });
+    dispatch({ type: 'AUDIO_RECEIVED' });
+  }, [stopBrowserListening]);
 
   const handleMicError = useCallback((err: Error) => {
-    toast.error('Microphone initialization failed. Please check permissions.');
+    toast.error('Microphone access failed. Please allow microphone permission in your browser.');
     dispatch({ type: 'SET_ERROR', payload: 'Microphone access denied or failed.' });
   }, [toast]);
 
-  // Voice VAD Hook
-  const { start: startMic, stop: stopMic, isRecording, hasDetectedSpeech, getAnalyser, analyser } = useVoiceCapture({
-    onEnd: handleAudioEnd,
-    onError: handleMicError,
-    silenceMs: 3000
-  });
-
-  // Manage Mic Activation based on state phase - startMic and stopMic are now stable!
+  // Manage speech recognition based on interview phase
   useEffect(() => {
     if (phase === 'listening') {
       resetBrowserTranscript();
-      startMic();
       startBrowserListening();
     } else {
-      stopMic();
       stopBrowserListening();
     }
-  }, [phase, startMic, stopMic, startBrowserListening, stopBrowserListening, resetBrowserTranscript]);
+  }, [phase, startBrowserListening, stopBrowserListening, resetBrowserTranscript]);
 
   // Cleanup camera stream on unmount
   useEffect(() => {
@@ -647,7 +631,7 @@ export default function VoiceInterviewPage() {
             </div>
 
             <div className="h-10 w-full max-w-xs flex items-center justify-center">
-              <AudioVisualizer isActive={phase === 'listening'} analyser={analyser} />
+              <AudioVisualizer isActive={phase === 'listening'} />
             </div>
           </div>
 
@@ -727,12 +711,41 @@ export default function VoiceInterviewPage() {
                         <span>AI Interviewer is processing your answer...</span>
                       </motion.div>
                     )}
+
+                    {/* Live transcript preview while listening */}
+                    {phase === 'listening' && browserTranscript && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex gap-2.5 items-start justify-end"
+                      >
+                        <div className="text-sm text-emerald-300/80 font-medium leading-relaxed pl-6 text-right max-w-[85%] italic">
+                          {browserTranscript}
+                          <span className="inline-block w-1 h-3.5 bg-emerald-400 ml-1 animate-pulse" />
+                        </div>
+                        <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat border border-emerald-500/30">
+                          YOU
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Speech error display */}
+                    {phase === 'listening' && speechError && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="text-xs text-red-400 text-center px-4"
+                      >
+                        ⚠️ {speechError}
+                      </motion.div>
+                    )}
                     
                     <div ref={chatEndRef} />
                   </div>
                 )}
               </AnimatePresence>
             </div>
+
 
             {/* Action Controls Deck */}
             <div className="flex flex-col gap-4 items-center">
@@ -792,7 +805,7 @@ export default function VoiceInterviewPage() {
                   <button
                     onClick={() => {
                       if (phase === 'listening') {
-                        stopMic(true);
+                        handleSubmitAnswer();
                       }
                     }}
                     disabled={phase !== 'listening'}
