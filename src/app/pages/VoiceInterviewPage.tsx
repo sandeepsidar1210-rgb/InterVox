@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io, Socket } from 'socket.io-client';
 import { supabase } from '../../utils/supabase';
-import { useVoiceRecognition } from '../../hooks/useVoiceRecognition';
+import { useAudioRecorder } from '../../hooks/useAudioRecorder';
 import { useCountUp } from '../../hooks/useCountUp';
 import { InterviewerAvatar, AudioVisualizer, PageLoader, WebcamPanel, CameraPermissionModal, GridBackground } from '../components';
 import { Mic, MicOff, SkipForward, RotateCcw, StopCircle, Award, AlertTriangle, MessageSquare, ArrowLeft, Video } from 'lucide-react';
@@ -132,26 +132,18 @@ export default function VoiceInterviewPage() {
   const [token, setToken] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
+  // Audio recorder — records via MediaRecorder, transcribes via Groq Whisper HTTP POST
   const {
-    transcript: browserTranscript,
-    isListening: isBrowserListening,
-    isSupported: isSpeechSupported,
-    error: speechError,
-    startListening: startBrowserListening,
-    stopListening: stopBrowserListening,
-    resetTranscript: resetBrowserTranscript,
-  } = useVoiceRecognition();
+    startRecording,
+    stopAndTranscribe,
+    cancelRecording,
+    isRecording,
+    isTranscribing,
+    error: micError,
+  } = useAudioRecorder();
 
-  // Always keep transcript ref in sync so submit can read the latest value
-  const browserTranscriptRef = useRef('');
-  useEffect(() => {
-    browserTranscriptRef.current = browserTranscript;
-  }, [browserTranscript]);
-
-  // isRecording mirrors the browser speech recognition state
-  const isRecording = isBrowserListening;
-  // hasDetectedSpeech is true when the user has spoken something
-  const hasDetectedSpeech = browserTranscript.trim().length > 0;
+  // hasDetectedSpeech = we are actively recording
+  const hasDetectedSpeech = isRecording;
   
   // Audio playback queue refs
   const audioQueue = useRef<string[]>([]);
@@ -438,39 +430,45 @@ export default function VoiceInterviewPage() {
     }
   }, [interviewerText, candidateName, projectName]);
 
-  // Submit the spoken answer to the server using Web Speech API transcript only.
-  // No MediaRecorder / audio binary involved — transcript text IS the answer.
-  const handleSubmitAnswer = useCallback(() => {
+  // Submit: stop recording, upload to Groq Whisper, send transcript to server
+  const handleSubmitAnswer = useCallback(async () => {
     if (!socketRef.current?.connected) return;
+    if (isTranscribing) return; // prevent double submission
 
-    // Stop listening before we read the final transcript
-    stopBrowserListening();
+    console.log('📤 Stopping recording and transcribing...');
+    const transcript = await stopAndTranscribe();
+    console.log('📤 Final transcript:', transcript || '(empty)');
 
-    const spokenText = browserTranscriptRef.current.trim();
-    console.log('📤 Submitting spoken answer:', spokenText || '(empty)');
+    if (!socketRef.current?.connected) return; // check again after async
 
     allAudioSentRef.current = false;
     socketRef.current.emit('audio:end', {
       audioData: null,
-      textFallback: spokenText || '',
+      textFallback: transcript,
     });
     dispatch({ type: 'AUDIO_RECEIVED' });
-  }, [stopBrowserListening]);
+  }, [stopAndTranscribe, isTranscribing]);
 
-  const handleMicError = useCallback((err: Error) => {
-    toast.error('Microphone access failed. Please allow microphone permission in your browser.');
-    dispatch({ type: 'SET_ERROR', payload: 'Microphone access denied or failed.' });
-  }, [toast]);
+  // Show mic errors as toasts
+  useEffect(() => {
+    if (micError) {
+      toast.error(micError);
+    }
+  }, [micError, toast]);
 
-  // Manage speech recognition based on interview phase
+  // Manage recording based on interview phase
   useEffect(() => {
     if (phase === 'listening') {
-      resetBrowserTranscript();
-      startBrowserListening();
+      startRecording();
     } else {
-      stopBrowserListening();
+      // Cancel any in-progress recording if phase changes away from listening
+      // (user navigated away, session ended, etc.) but NOT if we're transcribing
+      if (!isTranscribing) {
+        cancelRecording();
+      }
     }
-  }, [phase, startBrowserListening, stopBrowserListening, resetBrowserTranscript]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // Cleanup camera stream on unmount
   useEffect(() => {
@@ -700,7 +698,7 @@ export default function VoiceInterviewPage() {
                       </motion.div>
                     ))}
 
-                    {/* Processing Spinner */}
+                    {/* Processing Spinner (server AI is generating next question) */}
                     {phase === 'processing' && (
                       <motion.div
                         initial={{ opacity: 0 }}
@@ -712,31 +710,20 @@ export default function VoiceInterviewPage() {
                       </motion.div>
                     )}
 
-                    {/* Live transcript preview while listening */}
-                    {phase === 'listening' && browserTranscript && (
+                    {/* Transcribing Spinner — while uploading audio to Groq Whisper */}
+                    {isTranscribing && (
                       <motion.div
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         className="flex gap-2.5 items-start justify-end"
                       >
-                        <div className="text-sm text-emerald-300/80 font-medium leading-relaxed pl-6 text-right max-w-[85%] italic">
-                          {browserTranscript}
-                          <span className="inline-block w-1 h-3.5 bg-emerald-400 ml-1 animate-pulse" />
+                        <div className="text-sm text-amber-300/80 font-medium leading-relaxed pl-6 text-right max-w-[85%] flex items-center gap-2">
+                          <div className="w-3 h-3 border border-amber-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                          <span className="italic">Transcribing your answer...</span>
                         </div>
-                        <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat border border-emerald-500/30">
+                        <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0 font-montserrat border border-amber-500/30">
                           YOU
                         </div>
-                      </motion.div>
-                    )}
-
-                    {/* Speech error display */}
-                    {phase === 'listening' && speechError && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="text-xs text-red-400 text-center px-4"
-                      >
-                        ⚠️ {speechError}
                       </motion.div>
                     )}
                     
@@ -751,14 +738,19 @@ export default function VoiceInterviewPage() {
             <div className="flex flex-col gap-4 items-center">
               {/* Status Label */}
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-text-secondary">
-                {phase === 'listening' ? (
-                  hasDetectedSpeech ? (
+                {isTranscribing ? (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span className="text-amber-400">✍️ Transcribing your answer...</span>
+                  </>
+                ) : phase === 'listening' ? (
+                  isRecording ? (
                     <>
                       <span className="flex h-2 w-2 relative">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
                       </span>
-                      <span className="text-red-400">🔴 Recording... Speak now</span>
+                      <span className="text-red-400">🔴 Recording — click mic to submit</span>
                     </>
                   ) : (
                     <>
@@ -766,7 +758,7 @@ export default function VoiceInterviewPage() {
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                       </span>
-                      <span className="text-emerald-400">🎙️ Listening... Waiting for speech</span>
+                      <span className="text-emerald-400">🎙️ Starting mic...</span>
                     </>
                   )
                 ) : phase === 'speaking' ? (
@@ -788,7 +780,7 @@ export default function VoiceInterviewPage() {
                 {/* Repeat button */}
                 <button
                   onClick={handleRepeat}
-                  disabled={phase !== 'listening'}
+                  disabled={phase !== 'listening' || isTranscribing}
                   className="w-12 h-12 rounded-2xl border border-glass-border bg-surface-2 hover:bg-white/5 text-white flex items-center justify-center transition-all disabled:opacity-30 disabled:pointer-events-none hover:-translate-y-0.5"
                   title="Repeat last question"
                 >
@@ -799,24 +791,29 @@ export default function VoiceInterviewPage() {
                 <div className="relative">
                   <div
                     className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${
-                      phase === 'listening' ? 'bg-emerald-500 scale-110' : 'bg-primary'
+                      isTranscribing ? 'bg-amber-500 scale-110' : phase === 'listening' ? 'bg-emerald-500 scale-110' : 'bg-primary'
                     }`}
                   />
                   <button
                     onClick={() => {
-                      if (phase === 'listening') {
+                      if (phase === 'listening' && !isTranscribing) {
                         handleSubmitAnswer();
                       }
                     }}
-                    disabled={phase !== 'listening'}
+                    disabled={phase !== 'listening' || isTranscribing}
                     className={`w-16 h-16 rounded-full flex items-center justify-center transition-all z-10 relative ${
-                      phase === 'listening'
+                      isTranscribing
+                        ? 'bg-amber-500 text-white cursor-wait shadow-[0_4px_16px_rgba(245,158,11,0.3)]'
+                        : phase === 'listening'
                         ? 'bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer shadow-[0_4px_16px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95'
                         : 'bg-primary/20 text-primary border border-primary/30 cursor-not-allowed'
                     }`}
-                    title={phase === 'listening' ? 'Click to finish speaking and submit' : 'Microphone inactive'}
+                    title={isTranscribing ? 'Transcribing...' : phase === 'listening' ? 'Click to finish speaking and submit' : 'Microphone inactive'}
                   >
-                    {phase === 'listening' ? <Mic size={24} /> : <MicOff size={24} />}
+                    {isTranscribing
+                      ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      : phase === 'listening' ? <Mic size={24} /> : <MicOff size={24} />
+                    }
                   </button>
                 </div>
 
