@@ -436,12 +436,28 @@ export default function VoiceInterviewPage() {
     if (socketRef.current?.connected) {
       allAudioSentRef.current = false;
       const fallbackText = browserTranscriptRef.current;
-      console.log('📤 Emitting audio:end with audio data size:', audioData?.length ?? 0, 'and fallback text:', fallbackText);
       
-      // Send audio data AND textFallback together in a single atomic event
-      // This eliminates the race condition where audio:end arrived before audio:chunk
+      // Convert Uint8Array to base64 string for reliable Socket.IO JSON serialization.
+      // Socket.IO's default serializer does NOT preserve Uint8Array — it arrives as 
+      // an empty object or gets stripped entirely on the server side.
+      let audioBase64: string | null = null;
+      if (audioData && audioData.length > 0) {
+        let binaryStr = '';
+        // Process in chunks of 8192 to avoid call-stack overflow on large arrays
+        const chunkSize = 8192;
+        for (let i = 0; i < audioData.length; i += chunkSize) {
+          const slice = audioData.subarray(i, Math.min(i + chunkSize, audioData.length));
+          binaryStr += String.fromCharCode.apply(null, slice as unknown as number[]);
+        }
+        audioBase64 = btoa(binaryStr);
+        console.log(`📤 Converted ${audioData.length} bytes of audio to base64 string (${audioBase64.length} chars)`);
+      }
+      
+      console.log('📤 Emitting audio:end with audio base64 length:', audioBase64?.length ?? 0, 'and fallback text:', fallbackText);
+      
+      // Send base64-encoded audio AND textFallback together in a single atomic event
       socketRef.current.emit('audio:end', { 
-        audioData: audioData || null, 
+        audioData: audioBase64, 
         textFallback: fallbackText 
       });
       dispatch({ type: 'AUDIO_RECEIVED' });

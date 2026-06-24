@@ -2180,10 +2180,13 @@ voiceInterviewNamespace.on('connection', (socket) => {
     const bufferList = [...session.audioBuffer];
     session.audioBuffer = [];
 
-    // If audioData was sent inline with audio:end (new atomic approach), add it to bufferList
+    // If audioData was sent inline with audio:end (new atomic approach), decode from base64
     if (payload?.audioData) {
       let inlineBuffer: Buffer;
-      if (Buffer.isBuffer(payload.audioData)) {
+      if (typeof payload.audioData === 'string') {
+        // Primary path: audioData is a base64-encoded string from the client
+        inlineBuffer = Buffer.from(payload.audioData, 'base64');
+      } else if (Buffer.isBuffer(payload.audioData)) {
         inlineBuffer = payload.audioData;
       } else if (payload.audioData instanceof ArrayBuffer) {
         inlineBuffer = Buffer.from(payload.audioData);
@@ -2195,6 +2198,7 @@ voiceInterviewNamespace.on('connection', (socket) => {
       console.log(`📦 Received inline audioData in audio:end event: ${inlineBuffer.length} bytes`);
       bufferList.push(inlineBuffer);
     }
+
 
     console.log(`📊 Processing audio buffer. Number of chunks in bufferList: ${bufferList.length}`);
     if (bufferList.length > 0) {

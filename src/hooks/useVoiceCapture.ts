@@ -76,6 +76,12 @@ export function useVoiceCapture({ onEnd, onError, silenceMs = 1500 }: UseVoiceCa
     const isRecorderActive = hasMediaRecorder && mediaRecorderRef.current!.state !== 'inactive';
 
     if (!isGraceful) {
+      // If a graceful submit is already in progress, don't hard-kill it —
+      // let the MediaRecorder.onstop handler finish delivering the audio.
+      if (shouldSubmitRef.current && !hasSubmittedRef.current) {
+        console.log('⚠️ Hard stop requested but graceful submit is in progress — skipping hard kill.');
+        return;
+      }
       // Hard stop: clear event handlers so they don't fire asynchronously
       if (hasMediaRecorder) {
         mediaRecorderRef.current!.onstop = null;
@@ -102,7 +108,7 @@ export function useVoiceCapture({ onEnd, onError, silenceMs = 1500 }: UseVoiceCa
           console.warn('Error graceful stopping MediaRecorder:', err);
           if (shouldSubmitRef.current && !hasSubmittedRef.current) {
             hasSubmittedRef.current = true;
-            onEnd();
+            onEnd(null);
           }
           performFullCleanup();
         }
@@ -110,7 +116,7 @@ export function useVoiceCapture({ onEnd, onError, silenceMs = 1500 }: UseVoiceCa
         console.warn('⚠️ MediaRecorder is inactive or null during graceful cleanup. shouldSubmit:', shouldSubmitRef.current, 'hasSubmitted:', hasSubmittedRef.current);
         if (shouldSubmitRef.current && !hasSubmittedRef.current) {
           hasSubmittedRef.current = true;
-          onEnd();
+          onEnd(null);
         }
         performFullCleanup();
       }
